@@ -106,7 +106,7 @@ http.authorizeHttpRequests(authorize -> authorize
 
 ## Development
 
-This directory is a local standalone git repository under `sdks/` so it can later be pushed to `github.com/debugbundle/debugbundle-java`.
+This repository is published at <https://github.com/debugbundle/debugbundle-java>.
 
 Build and test commands:
 

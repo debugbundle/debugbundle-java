@@ -33,12 +33,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.0-SNAPSHOT")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.0")
 ```
 
 Non-Spring Java applications can install the core SDK directly:
@@ -47,7 +47,7 @@ Non-Spring Java applications can install the core SDK directly:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 

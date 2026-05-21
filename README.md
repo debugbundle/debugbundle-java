@@ -126,6 +126,19 @@ make verify JAVA_VERSION=26
 
 Supported validation lanes are Java 17, Java 21, Java 25, and Java 26.
 
+## Releases
+
+GitHub Actions publishes stable releases to Maven Central through `.github/workflows/release.yml`.
+
+Required repository secrets:
+
+- `MAVEN_CENTRAL_USERNAME`
+- `MAVEN_CENTRAL_PASSWORD`
+- `MAVEN_GPG_PRIVATE_KEY`
+- `MAVEN_GPG_PASSPHRASE`
+
+The release workflow expects a stable project version already committed in all published `pom.xml` files, then runs `mvn clean deploy -Prelease` with the Sonatype Central publishing plugin. Trigger it either by pushing a `v<version>` tag or by running the workflow manually with the matching `version` input.
+
 ## Privacy Defaults
 
 The SDK is conservative by default:

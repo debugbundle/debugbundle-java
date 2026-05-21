@@ -48,6 +48,7 @@
     <junit.version>5.12.2</junit.version>
     <assertj.version>3.27.3</assertj.version>
     <spring.boot.version>3.5.0</spring.boot.version>
+    <central.publishing.plugin.version>0.9.0</central.publishing.plugin.version>
     <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
     <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
     <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
@@ -140,6 +141,14 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
             <version>${maven.gpg.plugin.version}</version>
+            <configuration>
+              <gpgArguments>
+                <arg>--batch</arg>
+                <arg>--yes</arg>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
             <executions>
               <execution>
                 <id>sign-artifacts</id>
@@ -149,6 +158,18 @@
                 </goals>
               </execution>
             </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>${central.publishing.plugin.version}</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <deploymentName>debugbundle-java ${project.version}</deploymentName>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
           </plugin>
         </plugins>
       </build>

@@ -1,0 +1,228 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SDK version to publish (for example 0.1.0)
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: release_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ -z "$version" ]]; then
+            echo "missing_version" >&2
+            exit 1
+          fi
+
+          if [[ "$version" == *-* ]]; then
+            echo "unexpected_prerelease_version:$version" >&2
+            exit 1
+          fi
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure Maven Central secrets are configured
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${MAVEN_CENTRAL_USERNAME:-}" ]]; then
+            echo "Missing MAVEN_CENTRAL_USERNAME secret for Maven Central publishing." >&2
+            exit 1
+          fi
+
+          if [[ -z "${MAVEN_CENTRAL_PASSWORD:-}" ]]; then
+            echo "Missing MAVEN_CENTRAL_PASSWORD secret for Maven Central publishing." >&2
+            exit 1
+          fi
+
+          if [[ -z "${MAVEN_GPG_PRIVATE_KEY:-}" ]]; then
+            echo "Missing MAVEN_GPG_PRIVATE_KEY secret for Maven Central signing." >&2
+            exit 1
+          fi
+
+          if [[ -z "${MAVEN_GPG_PASSPHRASE:-}" ]]; then
+            echo "Missing MAVEN_GPG_PASSPHRASE secret for Maven Central signing." >&2
+            exit 1
+          fi
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: Set up JDK and Maven credentials
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Check published package state
+        id: published_state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          artifacts=(debugbundle-java-core debugbundle-spring-boot-starter)
+          found=0
+
+          for artifact in "${artifacts[@]}"; do
+            url="https://repo1.maven.org/maven2/com/debugbundle/${artifact}/${RELEASE_VERSION}/${artifact}-${RELEASE_VERSION}.pom"
+            status="$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' "$url")"
+            if [[ "$status" == "200" ]]; then
+              found=$((found + 1))
+            elif [[ "$status" != "404" ]]; then
+              echo "unexpected_maven_central_status:${artifact}:${status}" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "$found" == "0" ]]; then
+            echo "state=none" >> "$GITHUB_OUTPUT"
+          elif [[ "$found" == "${#artifacts[@]}" ]]; then
+            echo "state=all" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=partial" >> "$GITHUB_OUTPUT"
+            echo "partial_publish_detected" >&2
+            exit 1
+          fi
+        env:
+          RELEASE_VERSION: ${{ steps.release_version.outputs.value }}
+
+      - name: Note already published package release
+        if: steps.published_state.outputs.state == 'all'
+        run: echo "Release version ${{ steps.release_version.outputs.value }} is already published for debugbundle-java; skipping publish steps."
+
+      - name: Validate Maven project versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          expected = os.environ["RELEASE_VERSION"]
+          namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+
+          root_pom = ET.parse("pom.xml").getroot()
+          root_version = root_pom.findtext("m:version", namespaces=namespace)
+          if root_version != expected:
+            raise SystemExit(f"root_version_mismatch:{root_version}:{expected}")
+
+          for module in ("debugbundle-java-core/pom.xml", "debugbundle-spring-boot-starter/pom.xml"):
+            pom = ET.parse(module).getroot()
+            parent_version = pom.findtext("m:parent/m:version", namespaces=namespace)
+            if parent_version != expected:
+              raise SystemExit(f"module_parent_version_mismatch:{module}:{parent_version}:{expected}")
+          PY
+        env:
+          RELEASE_VERSION: ${{ steps.release_version.outputs.value }}
+
+      - name: Run quality gates
+        run: mvn -B -ntp clean verify
+
+      - name: Publish to Maven Central
+        if: steps.published_state.outputs.state == 'none'
+        run: mvn -B -ntp clean deploy -Prelease -Dgpg.passphrase=${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+      - name: Create GitHub release
+        if: steps.published_state.outputs.state == 'none'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.release_version.outputs.value }}
+          generate_release_notes: true
+
+      - name: Smoke test published artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tmpdir="$(mktemp -d)"
+          mkdir -p "$tmpdir/src/main/java/release/smoke"
+          cd "$tmpdir"
+
+          cat > pom.xml <<'XML'
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>release.smoke</groupId>
+            <artifactId>debugbundle-java-smoke</artifactId>
+            <version>1.0.0</version>
+            <properties>
+              <maven.compiler.source>17</maven.compiler.source>
+              <maven.compiler.target>17</maven.compiler.target>
+            </properties>
+            <dependencies>
+              <dependency>
+                <groupId>com.debugbundle</groupId>
+                <artifactId>debugbundle-java-core</artifactId>
+                <version>${release.version}</version>
+              </dependency>
+            </dependencies>
+          </project>
+          XML
+
+          cat > src/main/java/release/smoke/Smoke.java <<'JAVA'
+          package release.smoke;
+
+          import com.debugbundle.sdk.DebugBundle;
+
+          public final class Smoke {
+            private Smoke() {
+            }
+
+            public static void main(String[] args) {
+              if (DebugBundle.class == null) {
+                throw new IllegalStateException("DebugBundle class missing");
+              }
+            }
+          }
+          JAVA
+
+          for attempt in $(seq 1 30); do
+            if mvn -B -ntp -Drelease.version=${RELEASE_VERSION} compile >/dev/null 2>&1; then
+              exit 0
+            fi
+
+            if [[ "$attempt" == "30" ]]; then
+              mvn -B -ntp -Drelease.version=${RELEASE_VERSION} compile
+              exit 1
+            fi
+
+            sleep 10
+          done
+        env:
+          RELEASE_VERSION: ${{ steps.release_version.outputs.value }}

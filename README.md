@@ -1,29 +1,21 @@
 # debugbundle-java
 
-DebugBundle SDK for Java and Spring Boot.
+Java SDK and Spring Boot starter for DebugBundle.
 
-## Status
+![Maven Central](https://img.shields.io/maven-central/v/com.debugbundle/debugbundle-java-core?label=maven)
+![CI](https://img.shields.io/github/actions/workflow/status/debugbundle/debugbundle-java/ci.yml?branch=main&label=ci)
+![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)
 
-This repository contains the release-ready Java core SDK plus the Spring Boot starter:
+Use this repository to capture Java backend exceptions, request metadata, Logback or `java.util.logging` records, runtime context, and probe data. The primary integration is Spring Boot 3.x servlet MVC.
 
-- a standalone multi-module Maven repository,
-- the core Java facade and client contract,
-- Java-idiomatic singleton and instance-based API entrypoints,
-- buffered event capture with explicit flush semantics,
-- HTTP transport for connected environments and file transport for local/development environments,
-- request/log/exception/message envelope generation with runtime facts,
-- recursive redaction for configured sensitive fields,
-- explicit no-throw degradation and retry backoff handling for failed transport attempts,
-- remote config polling with local capture-policy enforcement for logs and request events,
-- polling-based remote probe activation with standalone `probe_event` shipping,
-- request-scoped trigger-token activation and probe correlation,
-- vanilla Java hooks for uncaught exceptions and `java.util.logging`,
-- a Spring Boot starter with auto-configuration,
-- servlet request, exception, browser relay, and Logback logging integration,
-- Docker-backed core and starter test coverage,
-- Maven Central metadata, source/javadoc jar generation, and release signing profile.
+Requires Java 17 or newer.
 
-This first release targets Java 17+ and Spring Boot 3.x servlet MVC. It does **not** include WebFlux, standalone Jakarta Servlet containers, Micronaut, Quarkus, Dropwizard, gRPC Java, Spring Boot 2.x, `javax.servlet`, or Java agent bytecode instrumentation.
+## Modules
+
+| Module | Artifact | Purpose |
+| --- | --- | --- |
+| `debugbundle-java-core` | `com.debugbundle:debugbundle-java-core` | Core SDK facade, client, transports, redaction, probes, and vanilla Java hooks |
+| `debugbundle-spring-boot-starter` | `com.debugbundle:debugbundle-spring-boot-starter` | Spring Boot auto-configuration, servlet request capture, MVC exception capture, Logback capture, and browser relay |
 
 ## Installation
 
@@ -41,7 +33,7 @@ Spring Boot applications should install the starter:
 implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.0")
 ```
 
-Non-Spring Java applications can install the core SDK directly:
+Non-Spring Java applications can install the core SDK:
 
 ```xml
 <dependency>
@@ -51,30 +43,12 @@ Non-Spring Java applications can install the core SDK directly:
 </dependency>
 ```
 
-## Quick Start
-
-### Vanilla Java
-
-```java
-import com.debugbundle.sdk.DebugBundle;
-import com.debugbundle.sdk.DebugBundleConfig;
-
-DebugBundle.init(DebugBundleConfig.builder()
-        .projectToken("dbundle_proj_test")
-        .service("checkout-api")
-        .environment("production")
-        .build());
-
-DebugBundle.captureException(new RuntimeException("boom"));
-DebugBundle.flush().join();
-```
-
-### Spring Boot
+## Spring Boot Quick Start
 
 ```yaml
 debugbundle:
-  project-token: ${DEBUGBUNDLE_TOKEN}
-  service: patients-api
+  project-token: ${DEBUGBUNDLE_PROJECT_TOKEN}
+  service: checkout-api
   environment: production
   project-mode: connected
   relay:
@@ -83,11 +57,11 @@ debugbundle:
 
 The starter auto-configures:
 
-- a servlet filter for request/response metadata,
-- an MVC exception resolver that preserves existing `@RestControllerAdvice`,
-- Logback capture with MDC values,
-- the browser relay route at `POST /debugbundle/browser`,
-- request ID and `X-DebugBundle-Trace-Id` correlation.
+- Servlet request and response metadata capture
+- MVC exception capture while preserving existing `@RestControllerAdvice`
+- Logback capture with MDC values
+- Browser relay route at `POST /debugbundle/browser`
+- Request ID and `X-DebugBundle-Trace-Id` correlation
 
 If Spring Security protects every route, permit the relay endpoint explicitly:
 
@@ -97,60 +71,97 @@ http.authorizeHttpRequests(authorize -> authorize
         .anyRequest().authenticated());
 ```
 
-## Modules
+## Vanilla Java Quick Start
 
-| Module | Purpose |
-| --- | --- |
-| `debugbundle-java-core` | Core SDK API, config model, client contract, and vanilla Java hooks |
-| `debugbundle-spring-boot-starter` | Spring Boot auto-configuration plus servlet integration |
+```java
+import com.debugbundle.sdk.DebugBundle;
+import com.debugbundle.sdk.DebugBundleConfig;
+
+DebugBundle.init(DebugBundleConfig.builder()
+        .projectToken(System.getenv("DEBUGBUNDLE_PROJECT_TOKEN"))
+        .service("checkout-api")
+        .environment("production")
+        .build());
+
+DebugBundle.captureUncaughtExceptions();
+DebugBundle.captureJavaUtilLogging();
+```
+
+Capture handled errors, logs, messages, and probes explicitly:
+
+```java
+DebugBundle.captureException(error);
+DebugBundle.captureLog("payment retry failed", LogLevel.WARNING, Map.of("order_id", orderId));
+DebugBundle.captureMessage("worker started");
+DebugBundle.probe("checkout.cart", Map.of("item_count", cart.items().size()));
+
+DebugBundle.flush().join();
+```
+
+## Configuration
+
+| Builder property | Default | Purpose |
+| --- | --- | --- |
+| `projectToken` | none | Write-only DebugBundle project token. |
+| `service` | `unknown-service` | Service name shown on incidents and bundles. |
+| `environment` | `development` | Runtime environment such as `production`, `staging`, or `development`. |
+| `projectMode` | `connected` | Use `local-only` to write events to `.debugbundle/local/events`. |
+| `endpoint` | `https://api.debugbundle.com/v1/events` | Ingestion endpoint for connected mode or self-hosting. |
+| `enabled` | `true` | Disable all capture without removing instrumentation. |
+| `redactFields` | common sensitive fields | Field names to redact recursively. |
+| `logLevel` | `WARNING` | Minimum captured log severity. |
+| `sampleRate` | `1.0` | Fraction of events to keep before transport. |
+| `batchSize` | `25` | Events per batch before flushing. |
+| `flushInterval` | `5 seconds` | Flush interval for buffered events. |
+| `requestTimeout` | `5 seconds` | HTTP transport timeout. |
+| `probesPollInterval` | `60 seconds` | Remote probe config poll interval. |
+| `localEventsDir` | `.debugbundle/local/events` | Local file transport directory. |
+| `maxProbeLabels` | `50` | Maximum distinct probe labels buffered in memory. |
+| `maxProbeEntriesPerLabel` | `10` | Maximum entries retained per probe label. |
+| `probeFlushOnError` | `true` | Attach buffered probe data to captured exceptions. |
+| `remoteConfigFetcher` | internal HTTP fetcher | Custom remote-config fetcher for tests or advanced routing. |
+
+## Current Scope
+
+This release targets Java 17+ and Spring Boot 3.x servlet MVC. It does not include WebFlux, standalone Jakarta Servlet containers, Micronaut, Quarkus, Dropwizard, gRPC Java, Spring Boot 2.x, `javax.servlet`, or Java agent bytecode instrumentation.
+
+## Safety Defaults
+
+- SDK failures are caught internally and do not crash the host process.
+- Request and response bodies are not captured by default.
+- Request headers are allowlisted.
+- Sensitive fields are recursively redacted before transport.
+- Browser relay requests cannot smuggle server-side credentials.
 
 ## Development
 
-This repository is published at <https://github.com/debugbundle/debugbundle-java>.
-
-Build and test commands:
+Build and test commands run Maven inside a disposable Docker container:
 
 ```bash
 make test
 make verify
 ```
 
-These targets run Maven inside a disposable Docker container (`maven:3.9.11-eclipse-temurin-<JAVA_VERSION>`) so the host machine does not need a local JDK or Maven install. Java 26 uses the current `eclipse-temurin:26-jdk` image and installs Maven inside the disposable container until the Maven image line publishes a Java 26 variant.
-
-Override `JAVA_VERSION` when needed:
+Override the Java lane when needed:
 
 ```bash
-make test JAVA_VERSION=17
+make verify JAVA_VERSION=17
 make verify JAVA_VERSION=26
 ```
 
 Supported validation lanes are Java 17, Java 21, Java 25, and Java 26.
 
-## Releases
+## Release
 
-GitHub Actions publishes stable releases to Maven Central through `.github/workflows/release.yml`.
+GitHub Actions publishes stable releases to Maven Central through `.github/workflows/release.yml`. The workflow expects a stable project version committed in all published `pom.xml` files and runs `mvn clean deploy -Prelease` with source, javadoc, and signed artifacts.
 
-Required repository secrets:
+## Documentation
 
-- `MAVEN_CENTRAL_USERNAME`
-- `MAVEN_CENTRAL_PASSWORD`
-- `MAVEN_GPG_PRIVATE_KEY`
-- `MAVEN_GPG_PASSPHRASE`
-
-The release workflow expects a stable project version already committed in all published `pom.xml` files, then runs `mvn clean deploy -Prelease` with the Sonatype Central publishing plugin. Trigger it either by pushing a `v<version>` tag or by running the workflow manually with the matching `version` input.
-
-## Privacy Defaults
-
-The SDK is conservative by default:
-
-- request and response bodies are not captured,
-- request headers are allowlisted,
-- sensitive fields are recursively redacted before transport,
-- browser relay requests cannot smuggle server credentials,
-- SDK failures are swallowed internally and never throw into host application code.
-
-Enable payload capture only with an explicit application-owned review for PHI, PCI, or other regulated data.
+- Java SDK docs: <https://debugbundle.com/docs/sdks/java>
+- SDK overview: <https://debugbundle.com/docs/sdks>
+- Browser relay: <https://debugbundle.com/docs/sdks/browser-relay>
+- Repository: <https://github.com/debugbundle/debugbundle-java>
 
 ## License
 
-AGPL-3.0-only
+AGPL-3.0-only. See `LICENSE`.

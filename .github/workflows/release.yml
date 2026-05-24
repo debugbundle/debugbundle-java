@@ -94,7 +94,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          artifacts=(debugbundle-java-core debugbundle-spring-boot-starter)
+          artifacts=(
+            debugbundle-java-parent
+            debugbundle-java-core
+            debugbundle-java-web
+            debugbundle-java-servlet-jakarta
+            debugbundle-java-servlet-javax
+            debugbundle-java-jaxrs-jakarta
+            debugbundle-java-jaxrs-javax
+            debugbundle-java-agent
+            debugbundle-spring-boot-starter
+          )
           found=0
 
           for artifact in "${artifacts[@]}"; do
@@ -142,11 +152,22 @@ jobs:
           if root_version != expected:
             raise SystemExit(f"root_version_mismatch:{root_version}:{expected}")
 
-          for module in ("debugbundle-java-core/pom.xml", "debugbundle-spring-boot-starter/pom.xml"):
-            pom = ET.parse(module).getroot()
+          modules = [module.text for module in root_pom.findall("m:modules/m:module", namespaces=namespace)]
+          if not modules:
+            raise SystemExit("missing_modules")
+
+          for module in modules:
+            module_pom = Path(module) / "pom.xml"
+            if not module_pom.exists():
+              raise SystemExit(f"module_pom_missing:{module_pom}")
+            pom = ET.parse(module_pom).getroot()
             parent_version = pom.findtext("m:parent/m:version", namespaces=namespace)
             if parent_version != expected:
-              raise SystemExit(f"module_parent_version_mismatch:{module}:{parent_version}:{expected}")
+              raise SystemExit(f"module_parent_version_mismatch:{module_pom}:{parent_version}:{expected}")
+
+            artifact_id = pom.findtext("m:artifactId", namespaces=namespace)
+            if not artifact_id:
+              raise SystemExit(f"module_artifact_missing:{module_pom}")
           PY
         env:
           RELEASE_VERSION: ${{ steps.release_version.outputs.value }}

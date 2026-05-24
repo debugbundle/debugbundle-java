@@ -1,12 +1,12 @@
 # debugbundle-java
 
-Java SDK and Spring Boot starter for DebugBundle.
+Java SDK, servlet adapters, and Spring Boot starter for DebugBundle.
 
 ![Maven Central](https://img.shields.io/maven-central/v/com.debugbundle/debugbundle-java-core?label=maven)
 ![CI](https://img.shields.io/github/actions/workflow/status/debugbundle/debugbundle-java/ci.yml?branch=main&label=ci)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)
 
-Use this repository to capture Java backend exceptions, request metadata, Logback or `java.util.logging` records, runtime context, and probe data. The primary integration is Spring Boot 3.x servlet MVC.
+Use this repository to capture Java backend exceptions, request metadata, Logback or `java.util.logging` records, runtime context, and probe data. The SDK has a framework-neutral core, shared web helpers, servlet and JAX-RS adapters for Spring and non-Spring web applications, and a startup javaagent for app-server bootstrap.
 
 Requires Java 17 or newer.
 
@@ -15,6 +15,12 @@ Requires Java 17 or newer.
 | Module | Artifact | Purpose |
 | --- | --- | --- |
 | `debugbundle-java-core` | `com.debugbundle:debugbundle-java-core` | Core SDK facade, client, transports, redaction, probes, and vanilla Java hooks |
+| `debugbundle-java-web` | `com.debugbundle:debugbundle-java-web` | Shared web request, response, header, query, and correlation helpers for adapters |
+| `debugbundle-java-servlet-jakarta` | `com.debugbundle:debugbundle-java-servlet-jakarta` | `jakarta.servlet` filter, listener, and browser relay servlet for Jakarta EE / non-Spring servlet containers |
+| `debugbundle-java-servlet-javax` | `com.debugbundle:debugbundle-java-servlet-javax` | `javax.servlet` filter, listener, and browser relay servlet for classic Java EE / app-server WAR deployments |
+| `debugbundle-java-jaxrs-jakarta` | `com.debugbundle:debugbundle-java-jaxrs-jakarta` | `jakarta.ws.rs` request/response filter and fallback exception mapper for Jakarta EE stacks |
+| `debugbundle-java-jaxrs-javax` | `com.debugbundle:debugbundle-java-jaxrs-javax` | `javax.ws.rs` request/response filter and fallback exception mapper for RESTEasy-style app-server stacks |
+| `debugbundle-java-agent` | `com.debugbundle:debugbundle-java-agent` | Startup javaagent that loads config, initializes the SDK, and installs uncaught-exception and JUL hooks |
 | `debugbundle-spring-boot-starter` | `com.debugbundle:debugbundle-spring-boot-starter` | Spring Boot auto-configuration, servlet request capture, MVC exception capture, Logback capture, and browser relay |
 
 ## Installation
@@ -25,12 +31,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.0")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.1")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -39,8 +45,50 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
+```
+
+Servlet WAR applications should add exactly one servlet adapter that matches their container namespace:
+
+```xml
+<dependency>
+  <groupId>com.debugbundle</groupId>
+  <artifactId>debugbundle-java-servlet-jakarta</artifactId>
+  <version>0.1.1</version>
+</dependency>
+```
+
+```xml
+<dependency>
+  <groupId>com.debugbundle</groupId>
+  <artifactId>debugbundle-java-servlet-javax</artifactId>
+  <version>0.1.1</version>
+</dependency>
+```
+
+JAX-RS applications can add the matching namespace adapter alongside the servlet adapter when they want provider-based request and exception capture:
+
+```xml
+<dependency>
+  <groupId>com.debugbundle</groupId>
+  <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
+  <version>0.1.1</version>
+</dependency>
+```
+
+```xml
+<dependency>
+  <groupId>com.debugbundle</groupId>
+  <artifactId>debugbundle-java-jaxrs-javax</artifactId>
+  <version>0.1.1</version>
+</dependency>
+```
+
+App-server operators that prefer JVM startup injection can add the bootstrap agent:
+
+```text
+-javaagent:/opt/debugbundle/debugbundle-java-agent-0.1.1.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 ## Spring Boot Quick Start
@@ -60,6 +108,7 @@ The starter auto-configures:
 - Servlet request and response metadata capture
 - MVC exception capture while preserving existing `@RestControllerAdvice`
 - Logback capture with MDC values
+- Spring `TaskDecorator` propagation for `@Async` and application task executors
 - Browser relay route at `POST /debugbundle/browser`
 - Request ID and `X-DebugBundle-Trace-Id` correlation
 
@@ -98,6 +147,162 @@ DebugBundle.probe("checkout.cart", Map.of("item_count", cart.items().size()));
 DebugBundle.flush().join();
 ```
 
+## Servlet WAR Quick Start
+
+Register the DebugBundle listener so each WAR gets its own client instance and service identity:
+
+```xml
+<listener>
+  <listener-class>com.debugbundle.servlet.jakarta.DebugBundleServletContextListener</listener-class>
+</listener>
+```
+
+```xml
+<listener>
+  <listener-class>com.debugbundle.servlet.javax.DebugBundleServletContextListener</listener-class>
+</listener>
+```
+
+If you prefer programmatic bootstrap, you can still initialize the core SDK yourself before request traffic reaches the filter:
+
+```java
+DebugBundle.init(DebugBundleConfig.builder()
+        .projectToken(System.getenv("DEBUGBUNDLE_PROJECT_TOKEN"))
+        .service("legacy-orders")
+        .environment("production")
+        .build());
+```
+
+For Jakarta Servlet containers, register the Jakarta filter:
+
+```xml
+<filter>
+  <filter-name>debugbundle</filter-name>
+  <filter-class>com.debugbundle.servlet.jakarta.DebugBundleServletFilter</filter-class>
+</filter>
+<filter-mapping>
+  <filter-name>debugbundle</filter-name>
+  <url-pattern>/*</url-pattern>
+  <dispatcher>REQUEST</dispatcher>
+  <dispatcher>ERROR</dispatcher>
+</filter-mapping>
+```
+
+For classic `javax.servlet` containers, use the `javax` adapter class instead:
+
+```xml
+<filter>
+  <filter-name>debugbundle</filter-name>
+  <filter-class>com.debugbundle.servlet.javax.DebugBundleServletFilter</filter-class>
+</filter>
+```
+
+The servlet adapters capture request/response metadata, request-scope correlation, handled servlet-chain exceptions, selected request headers, and query parameters. They do not capture request or response bodies by default.
+
+To host the browser relay on standard servlet deployments, register the matching relay servlet at `POST /debugbundle/browser`:
+
+```xml
+<servlet>
+  <servlet-name>debugbundleRelay</servlet-name>
+  <servlet-class>com.debugbundle.servlet.jakarta.DebugBundleRelayServlet</servlet-class>
+</servlet>
+<servlet-mapping>
+  <servlet-name>debugbundleRelay</servlet-name>
+  <url-pattern>/debugbundle/browser</url-pattern>
+</servlet-mapping>
+```
+
+For `javax.servlet` containers, use `com.debugbundle.servlet.javax.DebugBundleRelayServlet`.
+
+## JAX-RS Quick Start
+
+Register the matching DebugBundle filter and exception mapper with your JAX-RS application:
+
+```java
+@ApplicationPath("/api")
+public class LegacyApplication extends ResourceConfig {
+    public LegacyApplication() {
+        register(com.debugbundle.jaxrs.jakarta.DebugBundleJaxrsFilter.class);
+        register(com.debugbundle.jaxrs.jakarta.DebugBundleExceptionMapper.class);
+    }
+}
+```
+
+For `javax.ws.rs` / RESTEasy deployments, swap the package to `com.debugbundle.jaxrs.javax`.
+
+The JAX-RS adapters capture request/response metadata, preserve request-scope correlation, and provide a fallback `Throwable` mapper that only handles otherwise-unmapped exceptions while preserving existing `WebApplicationException` responses.
+
+## Java Agent Quick Start
+
+The agent is a bootstrap path, not a bytecode-instrumentation product. It initializes the singleton SDK early and installs the existing uncaught-exception and `java.util.logging` hooks.
+
+On WildFly and JBoss, the `capture-jul=true` path also covers JBoss LogManager records because the server backend emits JUL-compatible log records with thread and MDC metadata.
+
+Supported agent arguments:
+
+- `config=/path/to/debugbundle.properties`
+- `project-token=...`
+- `service=...`
+- `environment=...`
+- `project-mode=connected|local-only`
+- `capture-jul=true|false`
+- `capture-uncaught=true|false`
+
+The agent uses JVM system properties and environment variables as fallbacks, so the simplest production setup is usually a properties file plus `-javaagent`.
+
+Request and browser-relay capture still use the Spring starter or WAR-level servlet/JAX-RS adapters. The agent is intended for early core/log bootstrap and app-server startup wiring, not dynamic attachment to an already-running JVM.
+
+## WildFly and JBoss
+
+For app servers hosting multiple WARs in one JVM, configure explicit deployment service names so each WAR emits isolated event envelopes:
+
+```properties
+debugbundle.project-token=${DEBUGBUNDLE_PROJECT_TOKEN}
+debugbundle.environment=production
+debugbundle.project-mode=connected
+debugbundle.deployments.orders.service=orders-service
+debugbundle.deployments.identity.service=identity-service
+```
+
+Docker or `standalone.sh` startup can pass the shared config file through `JAVA_OPTS`:
+
+```sh
+JAVA_OPTS="$JAVA_OPTS -Ddebugbundle.config=/opt/debugbundle/debugbundle.properties"
+exec /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0
+```
+
+Use `debugbundle-java-servlet-javax` and `debugbundle-java-jaxrs-javax` for Java EE / RESTEasy-style deployments, and the `jakarta` artifacts for Jakarta EE 9+ deployments.
+
+## Delivery Modes
+
+Connected mode sends events to the DebugBundle ingestion API using the server-side project token:
+
+```properties
+debugbundle.project-mode=connected
+debugbundle.project-token=${DEBUGBUNDLE_PROJECT_TOKEN}
+debugbundle.endpoint=https://api.debugbundle.com/v1/events
+```
+
+Local-only mode writes atomic event files for `debugbundle process`:
+
+```properties
+debugbundle.project-mode=local-only
+debugbundle.local-events-dir=.debugbundle/local/events
+```
+
+Browser relay delivery follows the same modes. Local-only writes to `.debugbundle/local/events`; connected durable writes a spool record before forwarding; low-latency connected forwarding can skip the durable spool when configured.
+
+## Zero-Install Fallback
+
+When WAR changes or startup-script edits are not possible yet, emit canonical `debugbundle-ndjson` through existing logs or a sidecar and ingest it with the CLI:
+
+```bash
+debugbundle ingest app.debugbundle.ndjson
+debugbundle watch app.debugbundle.ndjson --cloud
+```
+
+This fallback is not full SDK parity, but it gives operators a safe bridge until the Java SDK can be installed.
+
 ## Configuration
 
 | Builder property | Default | Purpose |
@@ -123,7 +328,7 @@ DebugBundle.flush().join();
 
 ## Current Scope
 
-This release targets Java 17+ and Spring Boot 3.x servlet MVC. It does not include WebFlux, standalone Jakarta Servlet containers, Micronaut, Quarkus, Dropwizard, gRPC Java, Spring Boot 2.x, `javax.servlet`, or Java agent bytecode instrumentation.
+This release targets Java 17+, Spring Boot 3.x servlet MVC, standard `jakarta.servlet` and `javax.servlet` app-server deployments, namespace-matched JAX-RS adapters, servlet browser relay servlets, and startup javaagent bootstrap. WebFlux, Micronaut, Quarkus, Dropwizard, gRPC Java, and Spring Boot 2.x remain out of scope.
 
 ## Safety Defaults
 

@@ -248,6 +248,32 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     @Override
+    public synchronized Runnable decorate(Runnable runnable) {
+        if (runnable == null) {
+            return null;
+        }
+
+        RequestScopeState captured = requestScopeState.get();
+        return () -> {
+            RequestScopeState previous = requestScopeState.get();
+            if (captured == null) {
+                requestScopeState.remove();
+            } else {
+                requestScopeState.set(captured);
+            }
+            try {
+                runnable.run();
+            } finally {
+                if (previous == null) {
+                    requestScopeState.remove();
+                } else {
+                    requestScopeState.set(previous);
+                }
+            }
+        };
+    }
+
+    @Override
     public synchronized CompletableFuture<Void> flush() {
         flushInternal();
         return CompletableFuture.completedFuture(null);
@@ -387,7 +413,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "0.1.0",
+                    "0.1.1",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));

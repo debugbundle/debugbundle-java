@@ -2,14 +2,13 @@ package com.debugbundle.spring.boot;
 
 import com.debugbundle.sdk.DebugBundleClient;
 import com.debugbundle.sdk.DebugBundleRequestScope;
+import com.debugbundle.sdk.web.DebugBundleWebCapture;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Enumeration;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +17,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.HandlerMapping;
 
 public class DebugBundleServletFilter extends OncePerRequestFilter {
+    private static final List<String> BEGIN_REQUEST_HEADER_NAMES = List.of(
+        "X-DebugBundle-Probe-Trigger",
+        "X-DebugBundle-Trace-Id",
+        "X-Request-Id",
+        "X-Correlation-Id"
+    );
+    private static final List<String> CAPTURED_REQUEST_HEADER_NAMES = List.of(
+        "x-request-id",
+        "x-correlation-id",
+        "x-debugbundle-trace-id"
+    );
+
     private final DebugBundleClient client;
 
     public DebugBundleServletFilter(DebugBundleClient client) {
@@ -78,98 +89,52 @@ public class DebugBundleServletFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             Instant startedAt
     ) {
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("method", request.getMethod());
-        context.put("path", request.getRequestURI());
-        context.put("route_template", request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE));
-        context.put("response_status", response.getStatus());
-        context.put("duration_ms", Duration.between(startedAt, Instant.now()).toMillis());
-        context.put("trace_id", request.getHeader("X-DebugBundle-Trace-Id"));
-        context.put("request_id", firstNonBlank(
+        return DebugBundleWebCapture.context(
+                request.getMethod(),
+                request.getRequestURI(),
+                request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE),
+                response.getStatus(),
+                durationMillis(startedAt),
+                request.getHeader("X-DebugBundle-Trace-Id"),
+                DebugBundleWebCapture.firstNonBlank(
                 request.getHeader("X-Request-Id"),
                 request.getHeader("X-Correlation-Id")
         ));
-        return context;
     }
 
     private Map<String, Object> requestSnapshot(HttpServletRequest request) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("method", request.getMethod());
-        snapshot.put("path", request.getRequestURI());
-
-        Map<String, Object> headers = new LinkedHashMap<>();
-        headers.put("x-request-id", request.getHeader("X-Request-Id"));
-        headers.put("x-correlation-id", request.getHeader("X-Correlation-Id"));
-        headers.put("x-debugbundle-trace-id", request.getHeader("X-DebugBundle-Trace-Id"));
-        snapshot.put("headers", headers);
-        snapshot.put("query", extractQueryMap(request));
-        return snapshot;
+        return DebugBundleWebCapture.requestSnapshot(
+                request.getMethod(),
+                request.getRequestURI(),
+                DebugBundleWebCapture.selectedHeaders(request::getHeader, CAPTURED_REQUEST_HEADER_NAMES, true),
+                extractQueryMap(request)
+        );
     }
 
     private Map<String, Object> beginRequestSnapshot(HttpServletRequest request) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("method", request.getMethod());
-        snapshot.put("path", request.getRequestURI());
-        snapshot.put("route_template", request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE));
-        snapshot.put("headers", extractBeginHeaders(request));
-        snapshot.put("query", extractQueryMap(request));
-        return snapshot;
+        return DebugBundleWebCapture.beginRequestSnapshot(
+                request.getMethod(),
+                request.getRequestURI(),
+                request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE),
+                DebugBundleWebCapture.selectedHeaders(request::getHeader, BEGIN_REQUEST_HEADER_NAMES, false),
+                extractQueryMap(request)
+        );
     }
 
     private Map<String, Object> responseSnapshot(HttpServletResponse response, Instant startedAt) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("status_code", response.getStatus());
-        snapshot.put("duration_ms", Duration.between(startedAt, Instant.now()).toMillis());
-        return snapshot;
-    }
-
-    private String firstNonBlank(String first, String second) {
-        if (first != null && !first.isBlank()) {
-            return first;
-        }
-        if (second != null && !second.isBlank()) {
-            return second;
-        }
-        return null;
-    }
-
-    private Map<String, Object> extractBeginHeaders(HttpServletRequest request) {
-        Map<String, Object> headers = new LinkedHashMap<>();
-        copyHeaderIfPresent(headers, request, "X-DebugBundle-Probe-Trigger");
-        copyHeaderIfPresent(headers, request, "X-DebugBundle-Trace-Id");
-        copyHeaderIfPresent(headers, request, "X-Request-Id");
-        copyHeaderIfPresent(headers, request, "X-Correlation-Id");
-        return headers;
-    }
-
-    private void copyHeaderIfPresent(Map<String, Object> target, HttpServletRequest request, String name) {
-        String value = request.getHeader(name);
-        if (value != null && !value.isBlank()) {
-            target.put(name, value);
-        }
+        return DebugBundleWebCapture.responseSnapshot(response.getStatus(), durationMillis(startedAt));
     }
 
     private Map<String, Object> extractQueryMap(HttpServletRequest request) {
-        Map<String, Object> query = new LinkedHashMap<>();
         Enumeration<String> names = request.getParameterNames();
+        List<String> parameterNames = new java.util.ArrayList<>();
         while (names.hasMoreElements()) {
-            String name = names.nextElement();
-            String[] values = request.getParameterValues(name);
-            if (values == null || values.length == 0) {
-                continue;
-            }
-            if (values.length == 1) {
-                query.put(name, values[0]);
-                continue;
-            }
-            List<String> listValues = new ArrayList<>();
-            for (String value : values) {
-                if (value != null) {
-                    listValues.add(value);
-                }
-            }
-            query.put(name, listValues);
+            parameterNames.add(names.nextElement());
         }
-        return query;
+        return DebugBundleWebCapture.queryParameters(parameterNames, request::getParameterValues);
+    }
+
+    private long durationMillis(Instant startedAt) {
+        return DebugBundleWebCapture.durationMillis(startedAt, Instant.now());
     }
 }

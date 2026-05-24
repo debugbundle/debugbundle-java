@@ -1,7 +1,7 @@
 package com.debugbundle.spring.boot;
 
+import com.debugbundle.sdk.web.DebugBundleBrowserRelayBodyReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Map;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -21,7 +21,7 @@ class DebugBundleRelayController {
         byte[] body;
         try {
             body = readBoundedBody(request);
-        } catch (PayloadTooLargeException error) {
+        } catch (DebugBundleBrowserRelayBodyReader.PayloadTooLargeException error) {
             return ResponseEntity.status(413).build();
         } catch (IOException error) {
             return ResponseEntity.status(400).body(Map.of("errors", java.util.List.of("Relay request body could not be read.")));
@@ -35,15 +35,6 @@ class DebugBundleRelayController {
     }
 
     private byte[] readBoundedBody(HttpServletRequest request) throws IOException {
-        try (InputStream inputStream = request.getInputStream()) {
-            byte[] body = inputStream.readNBytes(DebugBundleBrowserRelayHandler.DEFAULT_MAX_BODY_BYTES + 1);
-            if (body.length > DebugBundleBrowserRelayHandler.DEFAULT_MAX_BODY_BYTES) {
-                throw new PayloadTooLargeException();
-            }
-            return body;
-        }
-    }
-
-    private static final class PayloadTooLargeException extends IOException {
+        return DebugBundleBrowserRelayBodyReader.readBoundedBody(request.getInputStream());
     }
 }

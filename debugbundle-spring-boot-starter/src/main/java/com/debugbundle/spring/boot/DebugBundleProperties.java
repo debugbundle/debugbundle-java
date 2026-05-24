@@ -12,11 +12,17 @@ public class DebugBundleProperties {
     private String environment = "development";
     private String service = "unknown-service";
     private boolean enabled = true;
+    private List<String> redactFields;
     private double sampleRate = 1.0d;
     private int batchSize = 25;
     private Duration flushInterval = Duration.ofSeconds(5);
     private String endpoint = "https://api.debugbundle.com/v1/events";
+    private Duration probesPollInterval = Duration.ofSeconds(60);
+    private int maxProbeLabels = 50;
+    private int maxProbeEntriesPerLabel = 10;
+    private boolean probeFlushOnError = true;
     private String logLevel = "warning";
+    private Duration requestTimeout = Duration.ofSeconds(5);
     private String projectMode = "connected";
     private String localEventsDir = ".debugbundle/local/events";
     @NestedConfigurationProperty
@@ -54,6 +60,14 @@ public class DebugBundleProperties {
         this.enabled = enabled;
     }
 
+    public List<String> getRedactFields() {
+        return redactFields;
+    }
+
+    public void setRedactFields(List<String> redactFields) {
+        this.redactFields = redactFields == null ? null : new ArrayList<>(redactFields);
+    }
+
     public double getSampleRate() {
         return sampleRate;
     }
@@ -86,12 +100,52 @@ public class DebugBundleProperties {
         this.endpoint = endpoint;
     }
 
+    public Duration getProbesPollInterval() {
+        return probesPollInterval;
+    }
+
+    public void setProbesPollInterval(Duration probesPollInterval) {
+        this.probesPollInterval = probesPollInterval;
+    }
+
+    public int getMaxProbeLabels() {
+        return maxProbeLabels;
+    }
+
+    public void setMaxProbeLabels(int maxProbeLabels) {
+        this.maxProbeLabels = maxProbeLabels;
+    }
+
+    public int getMaxProbeEntriesPerLabel() {
+        return maxProbeEntriesPerLabel;
+    }
+
+    public void setMaxProbeEntriesPerLabel(int maxProbeEntriesPerLabel) {
+        this.maxProbeEntriesPerLabel = maxProbeEntriesPerLabel;
+    }
+
+    public boolean isProbeFlushOnError() {
+        return probeFlushOnError;
+    }
+
+    public void setProbeFlushOnError(boolean probeFlushOnError) {
+        this.probeFlushOnError = probeFlushOnError;
+    }
+
     public String getLogLevel() {
         return logLevel;
     }
 
     public void setLogLevel(String logLevel) {
         this.logLevel = logLevel;
+    }
+
+    public Duration getRequestTimeout() {
+        return requestTimeout;
+    }
+
+    public void setRequestTimeout(Duration requestTimeout) {
+        this.requestTimeout = requestTimeout;
     }
 
     public String getProjectMode() {

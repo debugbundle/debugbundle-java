@@ -83,6 +83,44 @@ class DebugBundleApiTest {
     }
 
     @Test
+    void decoratedRunnablePropagatesRequestCorrelationAcrossAsyncWork() {
+        FakeTransport transport = new FakeTransport();
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .service("checkout-api")
+                        .environment("production")
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+
+        DebugBundleRequestScope scope = client.beginRequest(Map.of(
+                "method", "GET",
+                "path", "/checkout",
+                "headers", Map.of(
+                        "X-DebugBundle-Trace-Id", "trace-123",
+                        "X-Request-Id", "req-123"
+                ),
+                "query", Map.of()
+        ));
+        Runnable decorated = client.decorate(() -> client.captureException(new RuntimeException("async failure")));
+        client.endRequest(scope);
+
+        decorated.run();
+        client.flush();
+
+        assertThat(transport.calls()).hasSize(1);
+
+        Map<String, Object> event = transport.calls().get(0).events().get(0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> correlation = (Map<String, Object>) event.get("correlation");
+
+        assertThat(correlation).containsEntry("trace_id", "trace-123");
+        assertThat(correlation).containsEntry("request_id", "req-123");
+    }
+
+    @Test
     void retainsBufferedEventsWhenTransportFails() {
         ManualClock clock = new ManualClock();
         FakeTransport transport = new FakeTransport(List.of(

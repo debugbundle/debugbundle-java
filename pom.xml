@@ -6,7 +6,7 @@
 
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-parent</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <packaging>pom</packaging>
 
   <name>debugbundle-java-parent</name>
@@ -39,6 +39,12 @@
 
   <modules>
     <module>debugbundle-java-core</module>
+    <module>debugbundle-java-web</module>
+    <module>debugbundle-java-servlet-jakarta</module>
+    <module>debugbundle-java-servlet-javax</module>
+    <module>debugbundle-java-jaxrs-jakarta</module>
+    <module>debugbundle-java-jaxrs-javax</module>
+    <module>debugbundle-java-agent</module>
     <module>debugbundle-spring-boot-starter</module>
   </modules>
 
@@ -47,7 +53,11 @@
     <maven.compiler.release>17</maven.compiler.release>
     <junit.version>5.12.2</junit.version>
     <assertj.version>3.27.3</assertj.version>
+    <jboss.logmanager.version>3.2.2.Final</jboss.logmanager.version>
     <spring.boot.version>3.5.0</spring.boot.version>
+    <javax.servlet.version>4.0.1</javax.servlet.version>
+    <jakarta.ws.rs.version>3.1.0</jakarta.ws.rs.version>
+    <javax.ws.rs.version>2.1.1</javax.ws.rs.version>
     <central.publishing.plugin.version>0.9.0</central.publishing.plugin.version>
     <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
     <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>

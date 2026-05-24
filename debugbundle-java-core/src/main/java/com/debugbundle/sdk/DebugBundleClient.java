@@ -37,6 +37,10 @@ public interface DebugBundleClient extends AutoCloseable {
 
     void endRequest(DebugBundleRequestScope scope);
 
+    default Runnable decorate(Runnable runnable) {
+        return runnable;
+    }
+
     CompletableFuture<Void> flush();
 
     DebugBundleStatus status();

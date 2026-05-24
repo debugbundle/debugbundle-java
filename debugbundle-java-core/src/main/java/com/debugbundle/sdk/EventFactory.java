@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "0.1.0";
+    private static final String SDK_VERSION = "0.1.1";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;

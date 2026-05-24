@@ -12,6 +12,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
+import org.springframework.core.task.TaskDecorator;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 
@@ -27,11 +28,17 @@ public class DebugBundleAutoConfiguration {
                 .environment(properties.getEnvironment())
                 .service(properties.getService())
                 .enabled(properties.isEnabled())
+                .redactFields(properties.getRedactFields())
                 .sampleRate(properties.getSampleRate())
                 .batchSize(properties.getBatchSize())
                 .flushInterval(properties.getFlushInterval())
                 .endpoint(properties.getEndpoint())
+                .probesPollInterval(properties.getProbesPollInterval())
+                .maxProbeLabels(properties.getMaxProbeLabels())
+                .maxProbeEntriesPerLabel(properties.getMaxProbeEntriesPerLabel())
+                .probeFlushOnError(properties.isProbeFlushOnError())
                 .logLevel(LogLevel.fromName(properties.getLogLevel()))
+                .requestTimeout(properties.getRequestTimeout())
                 .projectMode(properties.getProjectMode())
                 .localEventsDir(properties.getLocalEventsDir())
                 .build());
@@ -58,6 +65,12 @@ public class DebugBundleAutoConfiguration {
     @ConditionalOnMissingBean(name = "debugBundleExceptionResolver")
     HandlerExceptionResolver debugBundleExceptionResolver(DebugBundleClient client) {
         return new DebugBundleExceptionResolver(client);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    TaskDecorator debugBundleTaskDecorator(DebugBundleClient client) {
+        return client::decorate;
     }
 
     @Bean

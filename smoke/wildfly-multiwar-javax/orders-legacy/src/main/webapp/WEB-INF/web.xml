@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee http://xmlns.jcp.org/xml/ns/javaee/web-app_4_0.xsd"
+         version="4.0">
+  <display-name>orders-legacy</display-name>
+
+  <listener>
+    <listener-class>com.debugbundle.servlet.javax.DebugBundleServletContextListener</listener-class>
+  </listener>
+
+  <filter>
+    <filter-name>debugbundle</filter-name>
+    <filter-class>com.debugbundle.servlet.javax.DebugBundleServletFilter</filter-class>
+  </filter>
+
+  <filter-mapping>
+    <filter-name>debugbundle</filter-name>
+    <url-pattern>/*</url-pattern>
+    <dispatcher>REQUEST</dispatcher>
+    <dispatcher>ERROR</dispatcher>
+  </filter-mapping>
+
+  <welcome-file-list>
+    <welcome-file>index.html</welcome-file>
+  </welcome-file-list>
+</web-app>

@@ -591,6 +591,28 @@ class DebugBundleApiTest {
         }
     }
 
+        @Test
+        void localOnlyModeRemainsUsableWithoutProjectToken(@TempDir Path tempDir) throws Exception {
+                DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                                DebugBundleConfig.builder()
+                                                .service("checkout-api")
+                                                .environment("production")
+                                                .projectMode("local-only")
+                                                .localEventsDir(tempDir.toString())
+                                                .build()
+                );
+
+                client.captureMessage("local-only event", LogLevel.WARNING, Map.of("tenant", "acme"));
+                client.flush();
+
+                assertThat(client.status()).isEqualTo(DebugBundleStatus.HEALTHY);
+                try (var files = Files.list(tempDir)) {
+                        List<Path> writtenFiles = files.toList();
+                        assertThat(writtenFiles).hasSize(1);
+                        assertThat(Files.readString(writtenFiles.get(0))).contains("local-only event");
+                }
+        }
+
     private void captureRecursiveFailure(DefaultDebugBundleClient client) {
         client.captureException(new RuntimeException("recursive failure"));
     }

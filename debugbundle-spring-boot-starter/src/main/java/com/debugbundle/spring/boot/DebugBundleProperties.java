@@ -180,6 +180,8 @@ public class DebugBundleProperties {
         private boolean durableWrite = true;
         private String spoolDir = ".debugbundle/local/browser-relay-spool";
         private List<String> allowedOrigins = new ArrayList<>();
+        private String service;
+        private String environment;
 
         public boolean isEnabled() {
             return enabled;
@@ -219,6 +221,22 @@ public class DebugBundleProperties {
 
         public void setAllowedOrigins(List<String> allowedOrigins) {
             this.allowedOrigins = allowedOrigins == null ? new ArrayList<>() : new ArrayList<>(allowedOrigins);
+        }
+
+        public String getService() {
+            return service;
+        }
+
+        public void setService(String service) {
+            this.service = service;
+        }
+
+        public String getEnvironment() {
+            return environment;
+        }
+
+        public void setEnvironment(String environment) {
+            this.environment = environment;
         }
     }
 }

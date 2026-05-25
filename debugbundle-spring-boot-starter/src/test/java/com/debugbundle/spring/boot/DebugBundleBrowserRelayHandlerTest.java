@@ -90,6 +90,61 @@ class DebugBundleBrowserRelayHandlerTest {
         }
     }
 
+        @Test
+        void relayPreservesBrowserServiceIdentityByDefaultEvenWhenBackendServiceIsConfigured(@TempDir Path tempDir)
+                        throws Exception {
+                DebugBundleProperties properties = properties(tempDir);
+                properties.setProjectMode("local-only");
+                properties.setService("api-backend");
+                properties.setEnvironment("production");
+                DebugBundleBrowserRelayHandler handler = new DebugBundleBrowserRelayHandler(properties, events -> true);
+
+                DebugBundleBrowserRelayHandler.RelayResponse response = handler.handle(
+                                validRelayRequest("127.0.0.10"),
+                                OBJECT_MAPPER.writeValueAsBytes(Map.of("batch", List.of(validFrontendExceptionEvent())))
+                );
+
+                assertThat(response.status()).isEqualTo(202);
+                try (var files = Files.list(tempDir)) {
+                        List<Map<String, Object>> writtenEvents = OBJECT_MAPPER.readValue(
+                                        Files.readString(files.toList().get(0)),
+                                        new TypeReference<>() {}
+                        );
+
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> service = (Map<String, Object>) writtenEvents.get(0).get("service");
+                        assertThat(service).containsEntry("name", "checkout-web");
+                        assertThat(service).containsEntry("environment", "production");
+                }
+        }
+
+        @Test
+        void relayUsesExplicitRelayServiceOverrideWhenConfigured(@TempDir Path tempDir) throws Exception {
+                DebugBundleProperties properties = properties(tempDir);
+                properties.setProjectMode("local-only");
+                properties.getRelay().setService("browser-relay");
+                properties.getRelay().setEnvironment("preview");
+                DebugBundleBrowserRelayHandler handler = new DebugBundleBrowserRelayHandler(properties, events -> true);
+
+                DebugBundleBrowserRelayHandler.RelayResponse response = handler.handle(
+                                validRelayRequest("127.0.0.11"),
+                                OBJECT_MAPPER.writeValueAsBytes(Map.of("batch", List.of(validFrontendExceptionEvent())))
+                );
+
+                assertThat(response.status()).isEqualTo(202);
+                try (var files = Files.list(tempDir)) {
+                        List<Map<String, Object>> writtenEvents = OBJECT_MAPPER.readValue(
+                                        Files.readString(files.toList().get(0)),
+                                        new TypeReference<>() {}
+                        );
+
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> service = (Map<String, Object>) writtenEvents.get(0).get("service");
+                        assertThat(service).containsEntry("name", "browser-relay");
+                        assertThat(service).containsEntry("environment", "preview");
+                }
+        }
+
     @Test
     void mixedBatchReturns400AndWritesOnlyValidEvents(@TempDir Path tempDir) throws Exception {
         DebugBundleProperties properties = properties(tempDir);

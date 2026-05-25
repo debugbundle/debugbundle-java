@@ -86,16 +86,16 @@ public final class DebugBundleBrowserRelayConfigLoader {
                         )
                 ),
                 firstNonBlank(
-                    initLookup.get("debugbundle.service"),
-                    contextLookup.get("debugbundle.service"),
-                    systemLookup.get("debugbundle.service"),
-                    environmentLookup.get("DEBUGBUNDLE_SERVICE")
+                    initLookup.get("debugbundle.relay.service"),
+                    contextLookup.get("debugbundle.relay.service"),
+                    systemLookup.get("debugbundle.relay.service"),
+                    environmentLookup.get("DEBUGBUNDLE_RELAY_SERVICE")
                 ),
                 firstNonBlank(
-                    initLookup.get("debugbundle.environment"),
-                    contextLookup.get("debugbundle.environment"),
-                    systemLookup.get("debugbundle.environment"),
-                    environmentLookup.get("DEBUGBUNDLE_ENVIRONMENT")
+                    initLookup.get("debugbundle.relay.environment"),
+                    contextLookup.get("debugbundle.relay.environment"),
+                    systemLookup.get("debugbundle.relay.environment"),
+                    environmentLookup.get("DEBUGBUNDLE_RELAY_ENVIRONMENT")
                 )
         );
     }

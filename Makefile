@@ -16,13 +16,20 @@ MAVEN_RUN = docker run --rm -t \
 	-w "$(WORKDIR)" \
 	$(MAVEN_IMAGE)
 
-.PHONY: test verify shell
+.PHONY: test verify smoke shell
 
 test:
 	$(MAVEN_RUN) $(MAVEN_COMMAND) clean test
 
 verify:
 	$(MAVEN_RUN) $(MAVEN_COMMAND) clean verify
+
+smoke:
+ifeq ($(JAVA_VERSION),26)
+	$(MAVEN_RUN) sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends maven >/dev/null && bash ./smoke/run-app-driven-smoke.sh'
+else
+	$(MAVEN_RUN) sh -lc 'bash ./smoke/run-app-driven-smoke.sh'
+endif
 
 shell:
 	$(MAVEN_RUN) sh

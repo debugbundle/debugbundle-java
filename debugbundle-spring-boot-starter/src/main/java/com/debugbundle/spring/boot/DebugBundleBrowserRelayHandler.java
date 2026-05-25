@@ -34,8 +34,8 @@ final class DebugBundleBrowserRelayHandler {
                 resolved.getRelay().isDurableWrite(),
                 resolved.getRelay().getSpoolDir(),
                 resolved.getRelay().getAllowedOrigins(),
-                resolved.getService(),
-                resolved.getEnvironment()
+            resolved.getRelay().getService(),
+            resolved.getRelay().getEnvironment()
         );
     }
 

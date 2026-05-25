@@ -190,57 +190,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          tmpdir="$(mktemp -d)"
-          mkdir -p "$tmpdir/src/main/java/release/smoke"
-          cd "$tmpdir"
-
-          cat > pom.xml <<'XML'
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>release.smoke</groupId>
-            <artifactId>debugbundle-java-smoke</artifactId>
-            <version>1.0.0</version>
-            <properties>
-              <maven.compiler.source>17</maven.compiler.source>
-              <maven.compiler.target>17</maven.compiler.target>
-            </properties>
-            <dependencies>
-              <dependency>
-                <groupId>com.debugbundle</groupId>
-                <artifactId>debugbundle-java-core</artifactId>
-                <version>${release.version}</version>
-              </dependency>
-            </dependencies>
-          </project>
-          XML
-
-          cat > src/main/java/release/smoke/Smoke.java <<'JAVA'
-          package release.smoke;
-
-          import com.debugbundle.sdk.DebugBundle;
-
-          public final class Smoke {
-            private Smoke() {
-            }
-
-            public static void main(String[] args) {
-              if (DebugBundle.class == null) {
-                throw new IllegalStateException("DebugBundle class missing");
-              }
-            }
-          }
-          JAVA
-
+          smoke_log="$(mktemp)"
+          trap 'rm -f "$smoke_log"' EXIT
           for attempt in $(seq 1 30); do
-            if mvn -B -ntp -Drelease.version=${RELEASE_VERSION} compile >/dev/null 2>&1; then
+            if bash ./smoke/run-app-driven-smoke.sh --published "${RELEASE_VERSION}" >"$smoke_log" 2>&1; then
+              cat "$smoke_log"
               exit 0
             fi
 
             if [[ "$attempt" == "30" ]]; then
-              mvn -B -ntp -Drelease.version=${RELEASE_VERSION} compile
+              cat "$smoke_log"
               exit 1
             fi
 

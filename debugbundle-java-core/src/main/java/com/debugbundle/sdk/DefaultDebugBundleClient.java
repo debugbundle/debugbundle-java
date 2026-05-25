@@ -56,9 +56,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     ) {
         this.config = config;
         this.active = config != null
-                && config.enabled()
-                && config.projectToken() != null
-                && !config.projectToken().isBlank();
+            && config.enabled()
+            && (hasProjectToken(config) || usesLocalOnlyMode(config));
         this.transport = transport == null && active ? TransportFactory.create(config) : transport;
         this.clockMillis = clockMillis == null ? System::currentTimeMillis : clockMillis;
         this.sensitiveFields = config == null
@@ -786,6 +785,16 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                 && config != null
                 && !"local-only".equals(normalize(config.projectMode()))
                 && !TransportFactory.isLocalEnvironment(config.environment());
+    }
+
+    private boolean hasProjectToken(DebugBundleConfig candidate) {
+        return candidate != null
+                && candidate.projectToken() != null
+                && !candidate.projectToken().isBlank();
+    }
+
+    private boolean usesLocalOnlyMode(DebugBundleConfig candidate) {
+        return candidate != null && "local-only".equals(normalize(candidate.projectMode()));
     }
 
     private String normalize(String value) {

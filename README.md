@@ -91,6 +91,30 @@ App-server operators that prefer JVM startup injection can add the bootstrap age
 -javaagent:/opt/debugbundle/debugbundle-java-agent-0.1.1.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
+Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.debugbundle</groupId>
+      <artifactId>debugbundle-java-parent</artifactId>
+      <version>0.1.1</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+```kotlin
+dependencies {
+    implementation(platform("com.debugbundle:debugbundle-java-parent:0.1.1"))
+    implementation("com.debugbundle:debugbundle-java-core")
+    implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
+}
+```
+
 ## Spring Boot Quick Start
 
 ```yaml
@@ -292,6 +316,8 @@ debugbundle.local-events-dir=.debugbundle/local/events
 
 Browser relay delivery follows the same modes. Local-only writes to `.debugbundle/local/events`; connected durable writes a spool record before forwarding; low-latency connected forwarding can skip the durable spool when configured.
 
+By default the relay preserves the browser event's own `service.name` and `service.environment`. Set `debugbundle.relay.service` or `debugbundle.relay.environment` only when you intentionally want the backend relay to override browser-owned identity.
+
 ## Zero-Install Fallback
 
 When WAR changes or startup-script edits are not possible yet, emit canonical `debugbundle-ndjson` through existing logs or a sidecar and ingest it with the CLI:
@@ -326,6 +352,8 @@ This fallback is not full SDK parity, but it gives operators a safe bridge until
 | `probeFlushOnError` | `true` | Attach buffered probe data to captured exceptions. |
 | `remoteConfigFetcher` | internal HTTP fetcher | Custom remote-config fetcher for tests or advanced routing. |
 
+For the complete configuration-source precedence, relay settings, support labels, safe-startup status semantics, service naming guidance, and verification commands, see `CONFIGURATION.md`.
+
 ## Current Scope
 
 This release targets Java 17+, Spring Boot 3.x servlet MVC, standard `jakarta.servlet` and `javax.servlet` app-server deployments, namespace-matched JAX-RS adapters, servlet browser relay servlets, and startup javaagent bootstrap. WebFlux, Micronaut, Quarkus, Dropwizard, gRPC Java, and Spring Boot 2.x remain out of scope.
@@ -345,6 +373,7 @@ Build and test commands run Maven inside a disposable Docker container:
 ```bash
 make test
 make verify
+make smoke
 ```
 
 Override the Java lane when needed:
@@ -365,6 +394,8 @@ GitHub Actions publishes stable releases to Maven Central through `.github/workf
 - Java SDK docs: <https://debugbundle.com/docs/sdks/java>
 - SDK overview: <https://debugbundle.com/docs/sdks>
 - Browser relay: <https://debugbundle.com/docs/sdks/browser-relay>
+- Local config and verification reference: `CONFIGURATION.md`
+- Smoke fixtures and commands: `smoke/README.md`
 - Repository: <https://github.com/debugbundle/debugbundle-java>
 
 ## License

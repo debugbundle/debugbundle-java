@@ -21,3 +21,6 @@ jobs:
 
       - name: Verify
         run: make verify JAVA_VERSION=${{ matrix.java-version }}
+
+      - name: App-driven smoke
+        run: make smoke JAVA_VERSION=${{ matrix.java-version }}

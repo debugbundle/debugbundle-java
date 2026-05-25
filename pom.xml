@@ -69,6 +69,46 @@
   <dependencyManagement>
     <dependencies>
       <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-web</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-servlet-jakarta</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-servlet-javax</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-jaxrs-javax</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-java-agent</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.debugbundle</groupId>
+        <artifactId>debugbundle-spring-boot-starter</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-dependencies</artifactId>
         <version>${spring.boot.version}</version>

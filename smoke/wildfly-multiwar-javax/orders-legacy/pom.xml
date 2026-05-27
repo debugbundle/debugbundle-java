@@ -12,7 +12,7 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <debugbundle.version>0.1.1</debugbundle.version>
+    <debugbundle.version>0.1.2</debugbundle.version>
   </properties>
 
   <dependencies>

@@ -15,7 +15,7 @@ bash ./smoke/run-app-driven-smoke.sh
 Run it against a published Maven Central version:
 
 ```bash
-bash ./smoke/run-app-driven-smoke.sh --published 0.1.2
+bash ./smoke/run-app-driven-smoke.sh --published 0.1.3
 ```
 
 ## WildFly and JBoss fixtures

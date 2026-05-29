@@ -20,7 +20,7 @@ final class DebugBundleBrowserRelayHandler {
 
     RelayResponse handle(HttpServletRequest request, byte[] requestBody) {
         DebugBundleBrowserRelay.Response response = relay.handle(toRequest(request), requestBody);
-        return new RelayResponse(response.status(), response.body());
+        return new RelayResponse(response.status(), response.body(), response.headers());
     }
 
     private static DebugBundleBrowserRelay.Config toConfig(DebugBundleProperties properties) {
@@ -51,6 +51,6 @@ final class DebugBundleBrowserRelayHandler {
     interface RelayForwarder extends DebugBundleBrowserRelay.RelayForwarder {
     }
 
-    record RelayResponse(int status, Map<String, Object> body) {
+    record RelayResponse(int status, Map<String, Object> body, Map<String, String> headers) {
     }
 }

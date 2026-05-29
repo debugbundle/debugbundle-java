@@ -31,12 +31,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.2")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:0.1.3")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -45,7 +45,7 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
@@ -55,7 +55,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-jakarta</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
@@ -63,7 +63,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-javax</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
@@ -73,7 +73,7 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
@@ -81,14 +81,14 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-javax</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
 App-server operators that prefer JVM startup injection can add the bootstrap agent:
 
 ```text
--javaagent:/opt/debugbundle/debugbundle-java-agent-0.1.2.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
+-javaagent:/opt/debugbundle/debugbundle-java-agent-0.1.3.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
@@ -99,7 +99,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>0.1.2</version>
+      <version>0.1.3</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -109,7 +109,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
 
 ```kotlin
 dependencies {
-    implementation(platform("com.debugbundle:debugbundle-java-parent:0.1.2"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:0.1.3"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
 }

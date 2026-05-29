@@ -69,38 +69,43 @@ public final class DebugBundleBrowserRelay {
     }
 
     public Response handle(Request request, byte[] requestBody) {
-        if (!"POST".equalsIgnoreCase(request.method())) {
-            return Response.empty(405);
-        }
-
         if (!isOriginAllowed(request)) {
             return Response.empty(403);
         }
 
+        Map<String, String> corsHeaders = corsHeaders(sourceOrigin(request));
+        if ("OPTIONS".equalsIgnoreCase(request.method())) {
+            return Response.empty(204, corsHeaders);
+        }
+
+        if (!"POST".equalsIgnoreCase(request.method())) {
+            return Response.empty(405, corsHeaders);
+        }
+
         String contentType = request.contentType();
         if (contentType == null || !contentType.toLowerCase(Locale.ROOT).contains("application/json")) {
-            return Response.withBody(400, 0, 0, List.of("Relay requests must use Content-Type: application/json."));
+            return Response.withBody(400, 0, 0, List.of("Relay requests must use Content-Type: application/json.")).withHeaders(corsHeaders);
         }
 
         byte[] body = requestBody == null ? new byte[0] : requestBody;
         if (body.length > DEFAULT_MAX_BODY_BYTES) {
-            return Response.empty(413);
+            return Response.empty(413, corsHeaders);
         }
 
         if (isRateLimited(request.remoteAddr())) {
-            return Response.empty(429);
+            return Response.empty(429, corsHeaders);
         }
 
         Map<String, Object> decoded;
         try {
             decoded = OBJECT_MAPPER.readValue(body, new TypeReference<>() {});
         } catch (IOException error) {
-            return Response.withBody(400, 0, 0, List.of("Relay request body must be valid JSON."));
+            return Response.withBody(400, 0, 0, List.of("Relay request body must be valid JSON.")).withHeaders(corsHeaders);
         }
 
         Object batchValue = decoded.get("batch");
         if (!(batchValue instanceof List<?> rawBatch)) {
-            return Response.withBody(400, 0, 0, List.of("Relay request body must include a batch array."));
+            return Response.withBody(400, 0, 0, List.of("Relay request body must include a batch array.")).withHeaders(corsHeaders);
         }
 
         List<Map<String, Object>> acceptedEvents = new ArrayList<>();
@@ -131,14 +136,14 @@ public final class DebugBundleBrowserRelay {
         }
 
         if (!acceptedEvents.isEmpty() && !deliverAcceptedEvents(acceptedEvents)) {
-            return Response.empty(500);
+            return Response.empty(500, corsHeaders);
         }
 
         if (!errors.isEmpty()) {
-            return Response.withBody(400, acceptedEvents.size(), errors.size(), errors);
+            return Response.withBody(400, acceptedEvents.size(), errors.size(), errors).withHeaders(corsHeaders);
         }
 
-        return Response.withBody(202, acceptedEvents.size(), 0, List.of());
+        return Response.withBody(202, acceptedEvents.size(), 0, List.of()).withHeaders(corsHeaders);
     }
 
     private boolean deliverAcceptedEvents(List<Map<String, Object>> acceptedEvents) {
@@ -408,6 +413,16 @@ public final class DebugBundleBrowserRelay {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("/$", "");
     }
 
+    private Map<String, String> corsHeaders(String origin) {
+        return Map.of(
+                "Access-Control-Allow-Origin", origin,
+                "Access-Control-Allow-Methods", "POST, OPTIONS",
+                "Access-Control-Allow-Headers", "content-type",
+                "Access-Control-Max-Age", "600",
+                "Vary", "Origin"
+        );
+    }
+
     @FunctionalInterface
     public interface RelayForwarder {
         boolean forward(List<Map<String, Object>> acceptedEvents);
@@ -470,9 +485,13 @@ public final class DebugBundleBrowserRelay {
         }
     }
 
-    public record Response(int status, Map<String, Object> body) {
+    public record Response(int status, Map<String, Object> body, Map<String, String> headers) {
         public static Response empty(int status) {
-            return new Response(status, null);
+            return new Response(status, null, Map.of());
+        }
+
+        public static Response empty(int status, Map<String, String> headers) {
+            return new Response(status, null, headers == null ? Map.of() : Map.copyOf(headers));
         }
 
         public static Response withBody(int status, int accepted, int rejected, List<String> errors) {
@@ -480,7 +499,11 @@ public final class DebugBundleBrowserRelay {
                     "accepted", accepted,
                     "rejected", rejected,
                     "errors", errors
-            ));
+            ), Map.of());
+        }
+
+        public Response withHeaders(Map<String, String> headers) {
+            return new Response(status, body, headers == null ? Map.of() : Map.copyOf(headers));
         }
     }
 

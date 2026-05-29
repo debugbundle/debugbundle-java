@@ -37,6 +37,71 @@ class DebugBundleBrowserRelayComplianceTest {
         }
     }
 
+        @Test
+        void relayAnswersAllowedCrossOriginPreflight(@TempDir Path tempDir) {
+        DebugBundleBrowserRelay relay = new DebugBundleBrowserRelay(new DebugBundleBrowserRelay.Config(
+            null,
+            null,
+            "local-only",
+            tempDir.resolve("events").toString(),
+            60,
+            true,
+            tempDir.resolve("spool").toString(),
+            List.of("https://web.example.test")
+        ));
+
+        DebugBundleBrowserRelay.Response response = relay.handle(
+            new DebugBundleBrowserRelay.Request(
+                "OPTIONS",
+                null,
+                "127.0.0.1",
+                headerName -> switch (headerName) {
+                    case "Origin" -> "https://web.example.test";
+                    case "Host" -> "api.example.test";
+                    case "Access-Control-Request-Method" -> "POST";
+                    default -> null;
+                }
+            ),
+            new byte[0]
+        );
+
+        assertThat(response.status()).isEqualTo(204);
+        assertThat(response.headers()).containsEntry("Access-Control-Allow-Origin", "https://web.example.test");
+        assertThat(response.headers()).containsEntry("Access-Control-Allow-Methods", "POST, OPTIONS");
+        }
+
+        @Test
+        void relayAddsCorsHeadersToAcceptedCrossOriginPosts(@TempDir Path tempDir) {
+        DebugBundleBrowserRelay relay = new DebugBundleBrowserRelay(new DebugBundleBrowserRelay.Config(
+            null,
+            null,
+            "local-only",
+            tempDir.resolve("events").toString(),
+            60,
+            true,
+            tempDir.resolve("spool").toString(),
+            List.of("https://web.example.test")
+        ));
+
+        DebugBundleBrowserRelay.Response response = relay.handle(
+            new DebugBundleBrowserRelay.Request(
+                "POST",
+                "application/json",
+                "127.0.0.1",
+                headerName -> switch (headerName) {
+                    case "Origin" -> "https://web.example.test";
+                    case "Host" -> "api.example.test";
+                    default -> null;
+                }
+            ),
+            "{\"batch\":[]}".getBytes(StandardCharsets.UTF_8)
+        );
+
+        assertThat(response.status()).isEqualTo(202);
+        assertThat(response.headers()).containsEntry("Access-Control-Allow-Origin", "https://web.example.test");
+        assertThat(response.headers()).containsEntry("Vary", "Origin");
+        }
+
     private void assertSingleRequestCase(Path caseDir, Map<String, Object> fixtureCase) throws Exception {
         RecordingForwarder forwarder = new RecordingForwarder();
         DebugBundleBrowserRelay relay = new DebugBundleBrowserRelay(configFor(caseDir, objectMap(fixtureCase.get("relayOptions"))), forwarder);

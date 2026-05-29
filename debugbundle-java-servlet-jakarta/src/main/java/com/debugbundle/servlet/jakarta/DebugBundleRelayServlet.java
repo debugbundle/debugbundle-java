@@ -49,11 +49,22 @@ public class DebugBundleRelayServlet extends HttpServlet {
         }
 
         DebugBundleBrowserRelay.Response relayResponse = relay.handle(toRequest(request), body);
-        writeResponse(response, relayResponse.status(), relayResponse.body());
+        writeResponse(response, relayResponse.status(), relayResponse.body(), relayResponse.headers());
+    }
+
+    @Override
+    protected void doOptions(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        DebugBundleBrowserRelay.Response relayResponse = relay.handle(toRequest(request), new byte[0]);
+        writeResponse(response, relayResponse.status(), relayResponse.body(), relayResponse.headers());
     }
 
     private void writeResponse(HttpServletResponse response, int status, Map<String, Object> body) throws IOException {
+        writeResponse(response, status, body, Map.of());
+    }
+
+    private void writeResponse(HttpServletResponse response, int status, Map<String, Object> body, Map<String, String> headers) throws IOException {
         response.setStatus(status);
+        headers.forEach(response::setHeader);
         if (body == null) {
             return;
         }

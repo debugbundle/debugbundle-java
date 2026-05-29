@@ -5,7 +5,8 @@ import java.io.IOException;
 import java.util.Map;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -16,8 +17,12 @@ class DebugBundleRelayController {
         this.relayHandler = relayHandler;
     }
 
-    @PostMapping("/debugbundle/browser")
+    @RequestMapping(value = "/debugbundle/browser", method = {RequestMethod.POST, RequestMethod.OPTIONS})
     ResponseEntity<?> relay(HttpServletRequest request) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return toResponse(relayHandler.handle(request, new byte[0]));
+        }
+
         byte[] body;
         try {
             body = readBoundedBody(request);
@@ -28,10 +33,16 @@ class DebugBundleRelayController {
         }
 
         DebugBundleBrowserRelayHandler.RelayResponse response = relayHandler.handle(request, body);
+        return toResponse(response);
+    }
+
+    private ResponseEntity<?> toResponse(DebugBundleBrowserRelayHandler.RelayResponse response) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(response.status());
+        response.headers().forEach(builder::header);
         if (response.body() == null) {
-            return ResponseEntity.status(response.status()).build();
+            return builder.build();
         }
-        return ResponseEntity.status(response.status()).body(response.body());
+        return builder.body(response.body());
     }
 
     private byte[] readBoundedBody(HttpServletRequest request) throws IOException {

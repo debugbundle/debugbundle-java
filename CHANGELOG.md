@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.3 - 2026-05-29
+
+- Added `OPTIONS /debugbundle/browser` preflight support and matching CORS headers across the shared relay implementation, servlet adapters, and Spring Boot handler so split-host browser relay works for explicitly allowed origins.
+
 ## 0.1.2 - 2026-05-27
 
 - Hardened the Maven Central release workflow with published-state validation so full-family releases skip safely when the target version already exists and fail closed on partial publication.

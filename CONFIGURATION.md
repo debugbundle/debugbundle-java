@@ -30,7 +30,7 @@ Maven:
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>0.1.3</version>
+      <version>1.0.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -42,7 +42,7 @@ Gradle:
 
 ```kotlin
 dependencies {
-  implementation(platform("com.debugbundle:debugbundle-java-parent:0.1.3"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:1.0.0"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
     implementation("com.debugbundle:debugbundle-java-jaxrs-jakarta")
@@ -236,7 +236,7 @@ bash ./smoke/run-app-driven-smoke.sh
 Published-artifact smoke:
 
 ```bash
-bash ./smoke/run-app-driven-smoke.sh --published 0.1.3
+bash ./smoke/run-app-driven-smoke.sh --published 1.0.0
 ```
 
 The smoke app installs the published BOM plus `debugbundle-java-core`, starts a mock ingestion server, initializes the SDK, opens a request scope with trace and request IDs, captures an exception, flushes, and asserts that the received event contains the expected `service`, `environment`, SDK metadata, and correlation fields.

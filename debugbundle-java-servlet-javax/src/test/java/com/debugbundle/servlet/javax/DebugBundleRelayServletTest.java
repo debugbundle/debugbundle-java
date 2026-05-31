@@ -47,7 +47,7 @@ class DebugBundleRelayServletTest {
                         "\"schema_version\":\"2026-03-01\"," +
                         "\"event_id\":\"11111111-1111-4111-8111-111111111111\"," +
                         "\"event_type\":\"frontend_exception\"," +
-                        "\"sdk_version\":\"0.1.0\"," +
+                        "\"sdk_version\":\"1.0.0\"," +
                         "\"occurred_at\":\"2026-05-21T06:00:00Z\"," +
                         "\"service\":{\"name\":\"checkout-web\",\"environment\":\"production\"}," +
                         "\"payload\":{\"message\":\"boom\"}}]}"

@@ -91,7 +91,7 @@ class DebugBundleRelayServletTest {
         event.put("event_id", "11111111-1111-4111-8111-111111111111");
         event.put("event_type", "frontend_exception");
         event.put("sdk_name", "evil-sdk");
-        event.put("sdk_version", "0.1.0");
+        event.put("sdk_version", "1.0.0");
         event.put("occurred_at", "2026-05-21T06:00:00Z");
         event.put("project_token", "stolen-token");
         event.put("organization_id", "org_123");

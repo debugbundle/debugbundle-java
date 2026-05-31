@@ -129,7 +129,7 @@
               "event_id": "00000000-0000-4000-8000-000000000403",
               "event_type": "backend_exception",
               "sdk_name": "@debugbundle/sdk-node",
-              "sdk_version": "0.1.0",
+              "sdk_version": "1.0.0",
               "occurred_at": "2026-05-19T10:01:30.000Z",
               "service": {
                 "name": "checkout-api",

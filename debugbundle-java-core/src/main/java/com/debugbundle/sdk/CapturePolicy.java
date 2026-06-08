@@ -8,7 +8,8 @@ record CapturePolicy(
         CaptureRequestEventsMode captureRequestEvents,
         CaptureBreadcrumbsMode captureBreadcrumbs,
         CaptureProbeEventsMode captureProbeEvents,
-        List<Integer> immediateClientErrorStatuses
+        List<Integer> immediateClientErrorStatuses,
+        List<ImmediateClientErrorPathRule> immediateClientErrorPathRules
 ) {
     static final CapturePolicy BALANCED = new CapturePolicy(
             "balanced",
@@ -16,6 +17,7 @@ record CapturePolicy(
             CaptureRequestEventsMode.FAILURES_ONLY,
             CaptureBreadcrumbsMode.EXCEPTION_ONLY,
             CaptureProbeEventsMode.BUFFER_ONLY,
+            List.of(),
             List.of()
     );
 
@@ -25,11 +27,13 @@ record CapturePolicy(
             CaptureRequestEventsMode.FAILURES_ONLY,
             CaptureBreadcrumbsMode.LOCAL_ONLY,
             CaptureProbeEventsMode.BUFFER_ONLY,
+            List.of(),
             List.of()
     );
 
     CapturePolicy {
         immediateClientErrorStatuses = List.copyOf(immediateClientErrorStatuses);
+        immediateClientErrorPathRules = List.copyOf(immediateClientErrorPathRules);
     }
 
     enum CaptureLogsMode {
@@ -55,5 +59,15 @@ record CapturePolicy(
     enum CaptureProbeEventsMode {
         BUFFER_ONLY,
         STANDALONE_WHEN_ACTIVATED
+    }
+}
+
+record ImmediateClientErrorPathRule(
+        int statusCode,
+        String pathPattern,
+        List<String> methods
+) {
+    ImmediateClientErrorPathRule {
+        methods = List.copyOf(methods);
     }
 }

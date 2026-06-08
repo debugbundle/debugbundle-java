@@ -125,7 +125,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     @Override
     public synchronized void captureRequest(Object request, Object response, Map<String, Object> context) {
-        if (!active || request == null || !shouldCaptureRequestEvent(response, context)) {
+        if (!active || request == null || !shouldCaptureRequestEvent(request, response, context)) {
             return;
         }
 
@@ -412,7 +412,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "1.0.0",
+                    "1.1.0",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));
@@ -571,12 +571,20 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         );
     }
 
-    private boolean shouldCaptureRequestEvent(Object response, Map<String, Object> context) {
+    @SuppressWarnings("unchecked")
+    private boolean shouldCaptureRequestEvent(Object request, Object response, Map<String, Object> context) {
         Integer statusCode = extractStatusCode(response);
         if (statusCode == null && context != null) {
             statusCode = asInteger(context.get("response_status"));
         }
-        return RequestCapturePolicy.shouldCapture(statusCode, remoteConfigSnapshot.capturePolicy());
+        String requestPath = null;
+        String httpMethod = null;
+        if (request instanceof Map<?, ?> rawMap) {
+            Map<String, Object> requestMap = (Map<String, Object>) rawMap;
+            requestPath = firstNonBlank(asString(requestMap.get("path")), asString(requestMap.get("url")));
+            httpMethod = asString(requestMap.get("method"));
+        }
+        return RequestCapturePolicy.shouldCapture(statusCode, requestPath, httpMethod, remoteConfigSnapshot.capturePolicy());
     }
 
     private void emitStandaloneProbeEvents(String label, Object data, ProbeCaptureDecision decision) {

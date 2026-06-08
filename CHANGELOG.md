@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.1.0 - 2026-06-08
+
+- Added path-scoped immediate client-error incident promotion support in the shared remote capture-policy handling so explicitly configured `4xx` routes can emit standalone `request_event` incident signals without widening the status globally.
+- Preserved `5xx` handling while keeping unpromoted client-error request telemetry context-only under repeated traffic across the Java SDK family, smoke fixtures, and published-install guidance.
+
 ## 1.0.0 - 2026-05-31
 
 - Promoted the Java SDK family to stable `1.0.0` across the core client, servlet and JAX-RS adapters, Spring Boot starter, javaagent, release smoke fixtures, and published-install documentation.

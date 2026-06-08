@@ -139,4 +139,61 @@ class RemoteConfigPolicyTest {
         Map<String, Object> payload = (Map<String, Object>) events.get(0).get("payload");
         assertThat(payload).containsEntry("message", "balanced warning log");
     }
+
+    @Test
+    void pathConfiguredClientErrorPromotesRequestEventWhenRequestCaptureIsOff() {
+        FakeRemoteConfigFetcher fetcher = new FakeRemoteConfigFetcher(new RemoteConfigResponse(
+                200,
+                """
+                {
+                  "probes_enabled": true,
+                  "remote_probes_enabled": true,
+                  "active_probes": [],
+                  "poll_interval_ms": 60000,
+                  "capture_policy": {
+                    "preset": "minimal",
+                    "capture_logs": "error",
+                    "capture_request_events": "off",
+                    "capture_breadcrumbs": "local_only",
+                    "capture_probe_events": "buffer_only",
+                    "immediate_client_error_statuses": [],
+                    "immediate_client_error_path_rules": [
+                      { "status_code": 404, "path_pattern": "/checkout/*", "methods": ["POST"] }
+                    ]
+                  }
+                }
+                """,
+                "\"cfg-v1\""
+        ));
+        FakeTransport transport = new FakeTransport();
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .service("checkout-api")
+                        .environment("production")
+                        .remoteConfigFetcher(fetcher)
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+
+        client.captureRequest(
+                Map.of("method", "POST", "path", "/checkout/cart", "headers", Map.of(), "query", Map.of()),
+                Map.of("status_code", 404, "duration_ms", 12),
+                Map.of()
+        );
+        client.captureRequest(
+                Map.of("method", "GET", "path", "/checkout/cart", "headers", Map.of(), "query", Map.of()),
+                Map.of("status_code", 404, "duration_ms", 12),
+                Map.of()
+        );
+        client.flush();
+
+        List<Map<String, Object>> events = transport.calls().get(0).events();
+        assertThat(events).hasSize(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) events.get(0).get("payload");
+        assertThat(payload).containsEntry("path", "/checkout/cart");
+        assertThat(payload).containsEntry("response_status", 404);
+    }
 }

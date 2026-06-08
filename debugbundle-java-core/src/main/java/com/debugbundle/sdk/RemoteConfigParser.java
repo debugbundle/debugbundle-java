@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 final class RemoteConfigParser {
@@ -117,12 +118,14 @@ final class RemoteConfigParser {
         CapturePolicy.CaptureBreadcrumbsMode captureBreadcrumbs = parseCaptureBreadcrumbsMode(node.get("capture_breadcrumbs"));
         CapturePolicy.CaptureProbeEventsMode captureProbeEvents = parseCaptureProbeEventsMode(node.get("capture_probe_events"));
         List<Integer> immediateClientErrorStatuses = parseImmediateClientErrorStatuses(node.get("immediate_client_error_statuses"));
+        List<ImmediateClientErrorPathRule> immediateClientErrorPathRules = parseImmediateClientErrorPathRules(node.get("immediate_client_error_path_rules"));
 
         if (captureLogs == null
                 || captureRequestEvents == null
                 || captureBreadcrumbs == null
                 || captureProbeEvents == null
-                || immediateClientErrorStatuses == null) {
+                || immediateClientErrorStatuses == null
+                || immediateClientErrorPathRules == null) {
             return null;
         }
 
@@ -132,7 +135,8 @@ final class RemoteConfigParser {
                 captureRequestEvents,
                 captureBreadcrumbs,
                 captureProbeEvents,
-                immediateClientErrorStatuses
+                immediateClientErrorStatuses,
+                immediateClientErrorPathRules
         );
     }
 
@@ -163,6 +167,62 @@ final class RemoteConfigParser {
         List<Integer> sorted = new ArrayList<>(statuses);
         sorted.sort(Integer::compareTo);
         return sorted;
+    }
+
+    private static List<ImmediateClientErrorPathRule> parseImmediateClientErrorPathRules(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+        if (!node.isArray() || node.size() > 25) {
+            return null;
+        }
+
+        List<ImmediateClientErrorPathRule> rules = new ArrayList<>();
+        for (JsonNode entry : node) {
+            if (!entry.isObject()) {
+                return null;
+            }
+            JsonNode statusNode = entry.get("status_code");
+            JsonNode pathNode = entry.get("path_pattern");
+            if (statusNode == null || !statusNode.canConvertToInt() || pathNode == null || !pathNode.isTextual()) {
+                return null;
+            }
+
+            int statusCode = statusNode.asInt();
+            String pathPattern = pathNode.asText();
+            if (statusCode < 400 || statusCode > 499 || !isValidPathPattern(pathPattern)) {
+                return null;
+            }
+
+            JsonNode methodsNode = entry.get("methods");
+            Set<String> methods = new LinkedHashSet<>();
+            if (methodsNode != null && !methodsNode.isNull()) {
+                if (!methodsNode.isArray() || methodsNode.size() > 7) {
+                    return null;
+                }
+                for (JsonNode methodNode : methodsNode) {
+                    if (!methodNode.isTextual()) {
+                        return null;
+                    }
+                    String method = methodNode.asText().trim().toUpperCase(Locale.ROOT);
+                    if (!Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS").contains(method)) {
+                        return null;
+                    }
+                    methods.add(method);
+                }
+            }
+            rules.add(new ImmediateClientErrorPathRule(statusCode, pathPattern, new ArrayList<>(methods)));
+        }
+
+        return rules;
+    }
+
+    private static boolean isValidPathPattern(String value) {
+        if (value == null || value.isBlank() || value.length() > 256 || !value.startsWith("/") || value.contains("?") || value.contains("#")) {
+            return false;
+        }
+        int wildcardIndex = value.indexOf('*');
+        return wildcardIndex == -1 || wildcardIndex == value.length() - 1;
     }
 
     private static CapturePolicy.CaptureLogsMode parseCaptureLogsMode(JsonNode node) {

@@ -62,7 +62,14 @@ final class SuppressionKeyBuilder {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Map<String, Object>> normalizedStackSignature(Object rawStack) {
+    private static Object normalizedStackSignature(Object rawStack) {
+        if (rawStack instanceof String stackTrace) {
+            return stackTrace.lines()
+                    .limit(6)
+                    .map(line -> line.replaceAll(":\\d+\\)", ":?)"))
+                    .toList();
+        }
+
         if (!(rawStack instanceof List<?> stackFrames)) {
             return List.of();
         }

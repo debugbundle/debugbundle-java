@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "1.1.0";
+    private static final String SDK_VERSION = "1.1.1";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -39,17 +39,13 @@ final class EventFactory {
         payload.put("message", error.getMessage());
         payload.put("handled", true);
         payload.put("runtime", RuntimeFacts.capture());
-        payload.put("stack", buildStackFrames(error));
+        payload.put("stack", buildStackTrace(error));
 
         Map<String, Object> request = extractMap(inputContext, "request");
-        if (!request.isEmpty()) {
-            payload.put("request", redact(request));
-        }
+        payload.put("request", redact(requestPayload(request)));
 
         Map<String, Object> response = extractMap(inputContext, "response");
-        if (!response.isEmpty()) {
-            payload.put("response", redact(response));
-        }
+        payload.put("response", redact(responsePayload(response)));
 
         if (config.probeFlushOnError()) {
             Map<String, Object> probeData = flushProbeData();
@@ -75,14 +71,17 @@ final class EventFactory {
 
         Map<String, Object> responseMap = asMap(response);
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("method", requestMap.get("method"));
-        payload.put("path", requestMap.get("path"));
-        payload.put("query", redact(requestMap.getOrDefault("query", Map.of())));
-        payload.put("headers", redact(requestMap.getOrDefault("headers", Map.of())));
-        payload.put("response_status", responseMap.get("status_code"));
-        payload.put("duration_ms", responseMap.get("duration_ms"));
-        payload.put("attributes", redact(residualContext(inputContext)));
-        return baseEvent("request_event", payload, extractCorrelation(inputContext), new LinkedHashMap<>());
+        payload.put("method", firstString(requestMap.get("method"), "UNKNOWN"));
+        payload.put("path", firstString(requestMap.get("path"), "/"));
+        payload.put("query", redact(asMap(requestMap.get("query"))));
+        payload.put("headers", redact(asMap(requestMap.get("headers"))));
+        payload.put("response_status", firstNumber(responseMap.get("status_code"), 0));
+        payload.put("duration_ms", firstNumber(responseMap.get("duration_ms"), 0));
+        Map<String, Object> eventContext = residualContext(inputContext);
+        if (eventContext.get("route_template") instanceof String routeTemplate && !routeTemplate.isBlank()) {
+            payload.put("route_template", routeTemplate);
+        }
+        return baseEvent("request_event", payload, extractCorrelation(inputContext), eventContext);
     }
 
     Map<String, Object> buildMessageEvent(String message, LogLevel level, Map<String, Object> inputContext) {
@@ -160,8 +159,12 @@ final class EventFactory {
         service.put("framework", null);
         service.put("environment", config.environment());
         event.put("service", service);
-        event.put("correlation", correlation);
-        event.put("context", redact(eventContext));
+        if (!correlation.isEmpty()) {
+            event.put("correlation", correlation);
+        }
+        if (!eventContext.isEmpty()) {
+            event.put("context", redact(eventContext));
+        }
         event.put("payload", redact(payload));
         return event;
     }
@@ -203,6 +206,64 @@ final class EventFactory {
                 "version", 1,
                 "items", items
         );
+    }
+
+    private String buildStackTrace(Throwable error) {
+        StringBuilder builder = new StringBuilder();
+        builder.append(error.getClass().getName()).append(": ");
+        if (error.getMessage() != null) {
+            builder.append(error.getMessage());
+        }
+        for (StackTraceElement element : error.getStackTrace()) {
+            builder.append("\n at ")
+                    .append(element.getClassName())
+                    .append(".")
+                    .append(element.getMethodName())
+                    .append("(")
+                    .append(element.getFileName())
+                    .append(":")
+                    .append(element.getLineNumber())
+                    .append(")");
+        }
+        return builder.toString();
+    }
+
+    private Map<String, Object> requestPayload(Map<String, Object> request) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("method", firstString(request.get("method"), "UNKNOWN"));
+        payload.put("path", firstString(request.get("path"), "/"));
+        payload.put("query", asMap(request.get("query")));
+        payload.put("headers", asMap(request.get("headers")));
+        if (request.containsKey("body")) {
+            payload.put("body", request.get("body"));
+        }
+        return payload;
+    }
+
+    private Map<String, Object> responsePayload(Map<String, Object> response) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("status_code", firstNumber(response.get("status_code"), 0));
+        if (response.containsKey("headers")) {
+            payload.put("headers", asMap(response.get("headers")));
+        }
+        if (response.containsKey("body")) {
+            payload.put("body", response.get("body"));
+        }
+        return payload;
+    }
+
+    private String firstString(Object value, String fallback) {
+        if (value instanceof String stringValue && !stringValue.isBlank()) {
+            return stringValue;
+        }
+        return fallback;
+    }
+
+    private Number firstNumber(Object value, Number fallback) {
+        if (value instanceof Number numberValue) {
+            return numberValue;
+        }
+        return fallback;
     }
 
     private List<Map<String, Object>> buildStackFrames(Throwable error) {

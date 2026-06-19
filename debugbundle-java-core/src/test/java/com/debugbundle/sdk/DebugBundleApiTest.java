@@ -471,6 +471,14 @@ class DebugBundleApiTest {
         Map<String, Object> logPayload = (Map<String, Object>) events.get(0).get("payload");
         assertThat(logPayload).containsEntry("message", "error raised");
         assertThat(logPayload).containsEntry("level", "error");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> requestPayload = (Map<String, Object>) events.get(1).get("payload");
+        assertThat(requestPayload).containsEntry("method", "GET");
+        assertThat(requestPayload).containsEntry("path", "/orders");
+        assertThat(requestPayload).containsEntry("response_status", 503);
+        assertThat(requestPayload).containsEntry("duration_ms", 45);
+        assertThat(requestPayload).doesNotContainKey("attributes");
     }
 
     @Test

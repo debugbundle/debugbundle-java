@@ -32,13 +32,14 @@ public final class DebugBundleBrowserRelay {
             "error_suppressed",
             "frontend_breadcrumb",
             "request_event",
-            "probe_event"
+            "probe_event",
+            "analytics_event"
     );
-    private static final Set<String> CORRELATION_KEYS = Set.of(
-            "request_id",
-            "trace_id",
-            "session_id",
-            "user_id_hash"
+    private static final List<String> DEBUG_CORRELATION_KEYS = List.of(
+            "request_id", "trace_id", "session_id", "user_id_hash"
+    );
+    private static final List<String> ANALYTICS_CORRELATION_KEYS = List.of(
+            "session_id", "visitor_id_hash", "user_id_hash", "trace_id", "deploy_id"
     );
     private static final Set<String> PROTECTED_BROWSER_KEYS = Set.of(
             "project_token",
@@ -254,7 +255,13 @@ public final class DebugBundleBrowserRelay {
                 : null;
         if (correlation != null) {
             Map<String, Object> sanitizedCorrelation = new LinkedHashMap<>();
-            for (String key : CORRELATION_KEYS) {
+            List<String> correlationKeys = "analytics_event".equals(eventType)
+                    ? ANALYTICS_CORRELATION_KEYS
+                    : DEBUG_CORRELATION_KEYS;
+            for (String key : correlationKeys) {
+                if (!correlation.containsKey(key)) {
+                    continue;
+                }
                 Object value = correlation.get(key);
                 if (value instanceof String || value == null) {
                     sanitizedCorrelation.put(key, value);

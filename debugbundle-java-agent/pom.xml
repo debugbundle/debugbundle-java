@@ -7,7 +7,7 @@
   <parent>
     <groupId>com.debugbundle</groupId>
     <artifactId>debugbundle-java-parent</artifactId>
-    <version>1.1.2</version>
+    <version>1.2.0</version>
   </parent>
 
   <artifactId>debugbundle-java-agent</artifactId>

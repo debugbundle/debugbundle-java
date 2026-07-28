@@ -12,6 +12,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -80,6 +81,104 @@ class DebugBundleApiTest {
 
         assertThat(transport.calls()).hasSize(1);
         assertThat(transport.calls().get(0).events()).hasSize(2);
+    }
+
+    @Test
+    void beforeSendRunsAfterRedactionAndMutatesBeforeQueueing() {
+        FakeTransport transport = new FakeTransport();
+        List<Object> observedPasswords = new ArrayList<>();
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .beforeSend(event -> {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> payload = (Map<String, Object>) event.get("payload");
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> attributes = (Map<String, Object>) payload.get("attributes");
+                            observedPasswords.add(attributes.get("password"));
+                            payload.put("message", "mutated");
+                            return event;
+                        })
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+
+        client.captureMessage("original", LogLevel.ERROR, Map.of("password", "secret"));
+        client.flush();
+
+        assertThat(observedPasswords).containsExactly("[REDACTED]");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload =
+                (Map<String, Object>) transport.calls().get(0).events().get(0).get("payload");
+        assertThat(payload).containsEntry("message", "mutated");
+    }
+
+    @Test
+    void beforeSendDropInvalidFailureAndSamplingAreSafe() {
+        FakeTransport transport = new FakeTransport();
+        AtomicInteger calls = new AtomicInteger();
+        DefaultDebugBundleClient droppingClient = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .beforeSend(event -> {
+                            calls.incrementAndGet();
+                            return null;
+                        })
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+        droppingClient.captureMessage("drop", LogLevel.ERROR, Map.of());
+        droppingClient.flush();
+        assertThat(calls).hasValue(1);
+        assertThat(transport.calls()).isEmpty();
+
+        DefaultDebugBundleClient invalidClient = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .beforeSend(event -> Map.of("invalid", true))
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+        invalidClient.captureMessage("preserve invalid", LogLevel.ERROR, Map.of());
+        invalidClient.flush();
+
+        DefaultDebugBundleClient failingClient = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .beforeSend(event -> {
+                            throw new IllegalStateException("hook failed");
+                        })
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+        failingClient.captureMessage("preserve failure", LogLevel.ERROR, Map.of());
+        failingClient.flush();
+
+        assertThat(transport.calls()).hasSize(2);
+        assertThat(message(transport.calls().get(0).events().get(0))).isEqualTo("preserve invalid");
+        assertThat(message(transport.calls().get(1).events().get(0))).isEqualTo("preserve failure");
+
+        AtomicInteger sampledCalls = new AtomicInteger();
+        DefaultDebugBundleClient sampledClient = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .sampleRate(0)
+                        .beforeSend(event -> {
+                            sampledCalls.incrementAndGet();
+                            return event;
+                        })
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+        sampledClient.captureMessage("sampled out", LogLevel.ERROR, Map.of());
+        sampledClient.flush();
+        assertThat(sampledCalls).hasValue(1);
+        assertThat(transport.calls()).hasSize(2);
     }
 
     @Test
@@ -175,6 +274,102 @@ class DebugBundleApiTest {
         client.flush();
 
         assertThat(transport.calls()).hasSize(2);
+    }
+
+    @Test
+    void retriesOnlyIndexedRetryableIngestionRejections() {
+        ManualClock clock = new ManualClock();
+        FakeTransport transport = new FakeTransport(List.of(
+                new TransportResponse(
+                        202,
+                        1_000L,
+                        """
+                        {"accepted":1,"rejected":1,"errors":[{"index":1,"reason":"rate_limited"}]}
+                        """
+                ),
+                new TransportResponse(202, null, "{\"accepted\":1,\"rejected\":0,\"errors\":[]}")
+        ));
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .service("checkout-api")
+                        .environment("production")
+                        .build(),
+                transport,
+                clock::nowMillis
+        );
+        client.captureMessage("accepted", LogLevel.ERROR, Map.of());
+        client.captureMessage("retry", LogLevel.ERROR, Map.of());
+
+        client.flush();
+        assertThat(client.status()).isEqualTo(DebugBundleStatus.DEGRADED);
+        assertThat(client.lastEventAt()).isPresent();
+
+        clock.advanceMillis(1_001L);
+        client.flush();
+        assertThat(transport.calls().get(1).events()).hasSize(1);
+        assertThat(transport.calls().get(1).events().get(0).get("payload"))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("message", "retry");
+        assertThat(client.status()).isEqualTo(DebugBundleStatus.HEALTHY);
+    }
+
+    @Test
+    void allTerminalRejectionsDoNotAdvanceDeliveryState() {
+        FakeTransport transport = new FakeTransport(List.of(
+                new TransportResponse(
+                        202,
+                        null,
+                        """
+                        {"accepted":0,"rejected":1,"errors":[{"index":0,"reason":"capture_policy_rejected"}]}
+                        """
+                )
+        ));
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .service("checkout-api")
+                        .environment("production")
+                        .build(),
+                transport,
+                System::currentTimeMillis
+        );
+        client.captureMessage("terminal", LogLevel.ERROR, Map.of());
+
+        client.flush();
+        client.flush();
+
+        assertThat(client.status()).isEqualTo(DebugBundleStatus.DISCONNECTED);
+        assertThat(client.lastEventAt()).isEmpty();
+        assertThat(transport.calls()).hasSize(1);
+    }
+
+    @Test
+    void inconsistentAcknowledgementRetainsFullBatch() {
+        ManualClock clock = new ManualClock();
+        FakeTransport transport = new FakeTransport(List.of(
+                new TransportResponse(202, 1_000L, "{\"accepted\":1,\"rejected\":0,\"errors\":[]}"),
+                new TransportResponse(202, null, "{\"accepted\":2,\"rejected\":0,\"errors\":[]}")
+        ));
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .service("checkout-api")
+                        .environment("production")
+                        .build(),
+                transport,
+                clock::nowMillis
+        );
+        client.captureMessage("first", LogLevel.ERROR, Map.of());
+        client.captureMessage("second", LogLevel.ERROR, Map.of());
+
+        client.flush();
+        assertThat(client.status()).isEqualTo(DebugBundleStatus.DEGRADED);
+        assertThat(client.lastEventAt()).isEmpty();
+
+        clock.advanceMillis(1_001L);
+        client.flush();
+        assertThat(transport.calls().get(1).events()).hasSize(2);
     }
 
     @Test
@@ -623,5 +818,10 @@ class DebugBundleApiTest {
 
     private void captureRecursiveFailure(DefaultDebugBundleClient client) {
         client.captureException(new RuntimeException("recursive failure"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String message(Map<String, Object> event) {
+        return (String) ((Map<String, Object>) event.get("payload")).get("message");
     }
 }

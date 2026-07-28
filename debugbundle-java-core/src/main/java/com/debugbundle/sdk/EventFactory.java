@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "1.2.0";
+    private static final String SDK_VERSION = "1.3.0";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -97,7 +97,7 @@ final class EventFactory {
     ) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("label", label);
-        payload.put("data", redact(data));
+        payload.put("data", normalizeProbeData(data));
         payload.put("activation_id", activationId);
         payload.put("probe_label_pattern", probeLabelPattern);
         return baseEvent("probe_event", payload, extractCorrelation(inputContext), residualContext(inputContext));
@@ -121,13 +121,25 @@ final class EventFactory {
         }
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put("label", label);
-        entry.put("data", redact(data));
+        entry.put("data", normalizeProbeData(data));
         entry.put("timestamp", isoTimestamp(now()));
         entry.put("activation_id", null);
         entries.add(entry);
         while (entries.size() > config.maxProbeEntriesPerLabel()) {
             entries.remove(0);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> normalizeProbeData(Object data) {
+        Object redacted = redact(data);
+        if (redacted instanceof Map<?, ?>) {
+            return new LinkedHashMap<>((Map<String, Object>) redacted);
+        }
+
+        Map<String, Object> wrapped = new LinkedHashMap<>();
+        wrapped.put("value", redacted);
+        return wrapped;
     }
 
     private Map<String, Object> baseEvent(

@@ -16,7 +16,7 @@ MAVEN_RUN = docker run --rm -t \
 	-w "$(WORKDIR)" \
 	$(MAVEN_IMAGE)
 
-.PHONY: test verify smoke shell
+.PHONY: test verify smoke smoke-wildfly shell
 
 test:
 	$(MAVEN_RUN) $(MAVEN_COMMAND) clean test
@@ -30,6 +30,10 @@ ifeq ($(JAVA_VERSION),26)
 else
 	$(MAVEN_RUN) sh -lc 'bash ./smoke/run-app-driven-smoke.sh'
 endif
+
+smoke-wildfly:
+	$(MAVEN_RUN) sh -lc 'mvn -q -DskipTests install && mvn -q -f smoke/wildfly-multiwar/orders/pom.xml package && mvn -q -f smoke/wildfly-multiwar/identity/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/orders-legacy/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/identity-legacy/pom.xml package'
+	./smoke/run-wildfly-multiwar-smoke.sh
 
 shell:
 	$(MAVEN_RUN) sh

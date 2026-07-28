@@ -12,6 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.servlet.ReadListener;
+import javax.servlet.ServletConfig;
+import javax.servlet.ServletContext;
 import javax.servlet.ServletInputStream;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.WriteListener;
@@ -61,6 +63,95 @@ class DebugBundleRelayServletTest {
         assertThat(response.body()).contains("\"accepted\":1");
     }
 
+    @Test
+    void relayServletHandlesPreflightOversizedAndUnreadableBodies() throws Exception {
+        DebugBundleRelayServlet servlet = relayServlet();
+
+        TestHttpServletRequest options = new TestHttpServletRequest(
+                "OPTIONS", null, "127.0.0.2",
+                Map.of("Host", "app.example.com", "Origin", "https://app.example.com"), "");
+        TestHttpServletResponse preflight = new TestHttpServletResponse();
+        servlet.doOptions(options.proxy(), preflight.proxy());
+
+        TestHttpServletRequest oversized = new TestHttpServletRequest(
+                "POST", "application/json", "127.0.0.3",
+                Map.of("Host", "app.example.com", "Origin", "https://app.example.com"),
+                "x".repeat(DebugBundleBrowserRelay.DEFAULT_MAX_BODY_BYTES + 1));
+        TestHttpServletResponse tooLarge = new TestHttpServletResponse();
+        servlet.doPost(oversized.proxy(), tooLarge.proxy());
+
+        TestHttpServletRequest unreadable = new TestHttpServletRequest(
+                "POST", "application/json", "127.0.0.4",
+                Map.of("Host", "app.example.com", "Origin", "https://app.example.com"), null);
+        TestHttpServletResponse badRequest = new TestHttpServletResponse();
+        servlet.doPost(unreadable.proxy(), badRequest.proxy());
+
+        assertThat(preflight.status()).isEqualTo(204);
+        assertThat(preflight.header("Access-Control-Allow-Origin")).isEqualTo("https://app.example.com");
+        assertThat(tooLarge.status()).isEqualTo(413);
+        assertThat(badRequest.status()).isEqualTo(400);
+        assertThat(badRequest.body()).contains("Relay request body could not be read.");
+    }
+
+    @Test
+    void relayServletInitializesFromServletContextParameters() throws Exception {
+        Map<String, String> parameters = Map.of(
+                "debugbundle.project-mode", "connected",
+                "debugbundle.relay.durable-write", "false"
+        );
+        ServletContext context = (ServletContext) Proxy.newProxyInstance(
+                ServletContext.class.getClassLoader(),
+                new Class<?>[] {ServletContext.class},
+                (instance, method, args) -> switch (method.getName()) {
+                    case "getInitParameter" -> parameters.get((String) args[0]);
+                    case "toString" -> "TestServletContext";
+                    case "hashCode" -> System.identityHashCode(instance);
+                    case "equals" -> instance == args[0];
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        ServletConfig config = (ServletConfig) Proxy.newProxyInstance(
+                ServletConfig.class.getClassLoader(),
+                new Class<?>[] {ServletConfig.class},
+                (instance, method, args) -> switch (method.getName()) {
+                    case "getServletContext" -> context;
+                    case "getInitParameter" -> parameters.get((String) args[0]);
+                    case "getServletName" -> "debugbundle-relay";
+                    case "toString" -> "TestServletConfig";
+                    case "hashCode" -> System.identityHashCode(instance);
+                    case "equals" -> instance == args[0];
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        DebugBundleRelayServlet servlet = new DebugBundleRelayServlet();
+        servlet.init(config);
+        TestHttpServletRequest request = new TestHttpServletRequest(
+                "POST", "application/json", "127.0.0.5",
+                Map.of("Host", "app.example.com", "Origin", "https://app.example.com"),
+                "{\"batch\":[]}");
+        TestHttpServletResponse response = new TestHttpServletResponse();
+
+        servlet.doPost(request.proxy(), response.proxy());
+
+        assertThat(response.status()).isEqualTo(202);
+    }
+
+    private DebugBundleRelayServlet relayServlet() {
+        return new DebugBundleRelayServlet(new DebugBundleBrowserRelay(
+                new DebugBundleBrowserRelay.Config(
+                        "dbundle_proj_test",
+                        "https://api.debugbundle.com/v1/events",
+                        "connected",
+                        ".debugbundle/local/events",
+                        60,
+                        false,
+                        ".debugbundle/local/browser-relay-spool",
+                        List.of()
+                ),
+                events -> true
+        ));
+    }
+
     private static final class TestHttpServletRequest {
         private final HttpServletRequest proxy;
 
@@ -71,7 +162,7 @@ class DebugBundleRelayServletTest {
                 Map<String, String> headers,
                 String body
         ) {
-            byte[] requestBody = body.getBytes(StandardCharsets.UTF_8);
+            byte[] requestBody = body == null ? null : body.getBytes(StandardCharsets.UTF_8);
             proxy = (HttpServletRequest) Proxy.newProxyInstance(
                     HttpServletRequest.class.getClassLoader(),
                     new Class<?>[] {HttpServletRequest.class},
@@ -80,7 +171,12 @@ class DebugBundleRelayServletTest {
                         case "getContentType" -> contentType;
                         case "getRemoteAddr" -> remoteAddr;
                         case "getHeader" -> headers.get((String) args[0]);
-                        case "getInputStream" -> new ByteArrayServletInputStream(requestBody);
+                        case "getInputStream" -> {
+                            if (requestBody == null) {
+                                throw new IOException("unreadable");
+                            }
+                            yield new ByteArrayServletInputStream(requestBody);
+                        }
                         case "toString" -> "TestHttpServletRequest{" + method + "}";
                         case "hashCode" -> System.identityHashCode(instance);
                         case "equals" -> instance == args[0];
@@ -98,6 +194,7 @@ class DebugBundleRelayServletTest {
         private final ByteArrayOutputStream output = new ByteArrayOutputStream();
         private int status;
         private String contentType;
+        private final Map<String, String> headers = new java.util.HashMap<>();
         private final HttpServletResponse proxy;
 
         private TestHttpServletResponse() {
@@ -111,6 +208,10 @@ class DebugBundleRelayServletTest {
                         }
                         case "setContentType" -> {
                             contentType = (String) args[0];
+                            yield null;
+                        }
+                        case "setHeader" -> {
+                            headers.put((String) args[0], (String) args[1]);
                             yield null;
                         }
                         case "getOutputStream" -> new ByteArrayServletOutputStream(output);
@@ -136,6 +237,10 @@ class DebugBundleRelayServletTest {
 
         private String body() {
             return output.toString(StandardCharsets.UTF_8);
+        }
+
+        private String header(String name) {
+            return headers.get(name);
         }
     }
 

@@ -23,7 +23,8 @@ public final class AppDrivenSmoke {
     private static final String ENVIRONMENT = "smoke";
     private static final String TRACE_ID = "smoke-trace-id";
     private static final String REQUEST_ID = "smoke-request-id";
-    private static final byte[] RESPONSE_BODY = "{\"accepted\":1,\"rejected\":0}".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] RESPONSE_BODY =
+            "{\"accepted\":1,\"rejected\":0,\"errors\":[]}".getBytes(StandardCharsets.UTF_8);
 
     private AppDrivenSmoke() {
     }

@@ -50,12 +50,15 @@ class RemoteProbeActivationTest {
         );
 
         client.probe("checkout.tax", Map.of("secret", "top-secret", "total", 42));
+        client.probe("checkout.list", List.of("first", "second"));
+        client.probe("checkout.scalar", 42);
+        client.probe("checkout.null", (Object) null);
         client.captureException(new RuntimeException("checkout failed"));
         client.flush();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).extracting(event -> event.get("event_type"))
-                .containsExactly("probe_event", "backend_exception");
+                .containsExactly("probe_event", "probe_event", "probe_event", "probe_event", "backend_exception");
 
         @SuppressWarnings("unchecked")
         Map<String, Object> probePayload = (Map<String, Object>) events.get(0).get("payload");
@@ -68,13 +71,28 @@ class RemoteProbeActivationTest {
         assertThat(probeData).containsEntry("secret", "[REDACTED]");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> exceptionPayload = (Map<String, Object>) events.get(1).get("payload");
+        Map<String, Object> listPayload = (Map<String, Object>) events.get(1).get("payload");
+        assertThat((Map<String, Object>) listPayload.get("data"))
+                .containsEntry("value", List.of("first", "second"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> scalarPayload = (Map<String, Object>) events.get(2).get("payload");
+        assertThat((Map<String, Object>) scalarPayload.get("data")).containsEntry("value", 42);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nullPayload = (Map<String, Object>) events.get(3).get("payload");
+        assertThat((Map<String, Object>) nullPayload.get("data")).containsEntry("value", null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> exceptionPayload = (Map<String, Object>) events.get(4).get("payload");
         @SuppressWarnings("unchecked")
         Map<String, Object> flushedProbeData = (Map<String, Object>) exceptionPayload.get("probe_data");
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> items = (List<Map<String, Object>>) flushedProbeData.get("items");
-        assertThat(items).hasSize(1);
+        assertThat(items).hasSize(4);
         assertThat(items.get(0)).containsEntry("activation_id", null);
+        assertThat((Map<String, Object>) items.get(1).get("data"))
+                .containsEntry("value", List.of("first", "second"));
+        assertThat((Map<String, Object>) items.get(2).get("data")).containsEntry("value", 42);
+        assertThat((Map<String, Object>) items.get(3).get("data")).containsEntry("value", null);
     }
 
     @Test

@@ -15,9 +15,20 @@ bash ./smoke/run-app-driven-smoke.sh
 Run it against a published Maven Central version:
 
 ```bash
-bash ./smoke/run-app-driven-smoke.sh --published 1.2.0
+bash ./smoke/run-app-driven-smoke.sh --published 1.3.0
 ```
 
 ## WildFly and JBoss fixtures
 
 `wildfly-multiwar/` and `wildfly-multiwar-javax/` provide app-server smoke fixtures for one-JVM multi-WAR deployments. They exist to verify per-deployment service identity, servlet adapter wiring, and startup bootstrap examples across Jakarta and Javax namespace lanes.
+
+Run both lanes with:
+
+```bash
+make smoke-wildfly JAVA_VERSION=21
+```
+
+The smoke builds the SDK and four WARs from the checkout, starts WildFly 36
+(Jakarta) and WildFly 23 (Javax) with the packaged javaagent, requests both
+deployments, and verifies that local event files retain distinct deployment
+service identities.

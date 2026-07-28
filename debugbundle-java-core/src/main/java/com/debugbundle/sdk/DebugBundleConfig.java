@@ -23,6 +23,7 @@ public final class DebugBundleConfig {
     private final String projectMode;
     private final String localEventsDir;
     private final RemoteConfigFetcher remoteConfigFetcher;
+    private final DebugBundleBeforeSend beforeSend;
 
     private DebugBundleConfig(Builder builder) {
         this.projectToken = builder.projectToken;
@@ -43,6 +44,7 @@ public final class DebugBundleConfig {
         this.projectMode = builder.projectMode;
         this.localEventsDir = builder.localEventsDir;
         this.remoteConfigFetcher = builder.remoteConfigFetcher;
+        this.beforeSend = builder.beforeSend;
     }
 
     public static Builder builder() {
@@ -121,6 +123,10 @@ public final class DebugBundleConfig {
         return remoteConfigFetcher;
     }
 
+    public DebugBundleBeforeSend beforeSend() {
+        return beforeSend;
+    }
+
     public static final class Builder {
         private String projectToken;
         private String environment = "development";
@@ -164,6 +170,7 @@ public final class DebugBundleConfig {
         private String projectMode = "connected";
         private String localEventsDir = ".debugbundle/local/events";
         private RemoteConfigFetcher remoteConfigFetcher;
+        private DebugBundleBeforeSend beforeSend;
 
         public Builder projectToken(String projectToken) {
             this.projectToken = projectToken;
@@ -272,6 +279,11 @@ public final class DebugBundleConfig {
 
         Builder remoteConfigFetcher(RemoteConfigFetcher remoteConfigFetcher) {
             this.remoteConfigFetcher = remoteConfigFetcher;
+            return this;
+        }
+
+        public Builder beforeSend(DebugBundleBeforeSend beforeSend) {
+            this.beforeSend = beforeSend;
             return this;
         }
 

@@ -101,7 +101,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             return;
         }
 
-        bufferEvent(eventFactory.buildExceptionEvent(error, mergedContext(context)));
+        bufferPreparedEvent(eventFactory.buildExceptionEvent(error, mergedContext(context)));
     }
 
     @Override
@@ -116,20 +116,26 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     @Override
     public synchronized void captureLog(String message, LogLevel level, Map<String, Object> context) {
-        if (!active || message == null || message.isBlank() || level == null || !shouldCaptureLog(level)) {
+        if (!active || message == null || message.isBlank() || level == null) {
             return;
         }
 
-        bufferEvent(eventFactory.buildLogEvent(message, level, mergedContext(context)));
+        Map<String, Object> event = prepareEvent(eventFactory.buildLogEvent(message, level, mergedContext(context)));
+        if (event != null && shouldCaptureLog(level)) {
+            bufferEvent(event);
+        }
     }
 
     @Override
     public synchronized void captureRequest(Object request, Object response, Map<String, Object> context) {
-        if (!active || request == null || !shouldCaptureRequestEvent(request, response, context)) {
+        if (!active || request == null) {
             return;
         }
 
-        bufferEvent(eventFactory.buildRequestEvent(request, response, mergedContext(context)));
+        Map<String, Object> event = prepareEvent(eventFactory.buildRequestEvent(request, response, mergedContext(context)));
+        if (event != null && shouldCaptureRequestEvent(request, response, context)) {
+            bufferEvent(event);
+        }
     }
 
     @Override
@@ -140,11 +146,16 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     @Override
     public synchronized void captureMessage(String message, LogLevel level, Map<String, Object> context) {
         LogLevel effectiveLevel = level == null ? LogLevel.INFO : level;
-        if (!active || message == null || message.isBlank() || !shouldCaptureLog(effectiveLevel)) {
+        if (!active || message == null || message.isBlank()) {
             return;
         }
 
-        bufferEvent(eventFactory.buildMessageEvent(message, effectiveLevel, mergedContext(context)));
+        Map<String, Object> event = prepareEvent(
+                eventFactory.buildMessageEvent(message, effectiveLevel, mergedContext(context))
+        );
+        if (event != null && shouldCaptureLog(effectiveLevel)) {
+            bufferEvent(event);
+        }
     }
 
     @Override
@@ -310,6 +321,17 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         refreshRemoteConfig();
     }
 
+    private void bufferPreparedEvent(Map<String, Object> event) {
+        Map<String, Object> prepared = prepareEvent(event);
+        if (prepared != null) {
+            bufferEvent(prepared);
+        }
+    }
+
+    private Map<String, Object> prepareEvent(Map<String, Object> event) {
+        return BeforeSendProcessor.apply(event, config.beforeSend());
+    }
+
     private void bufferEvent(Map<String, Object> event) {
         if (!shouldSample()) {
             return;
@@ -353,19 +375,58 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             return;
         }
 
+        List<Map<String, Object>> batch = List.copyOf(bufferedEvents);
         TransportResponse response;
         try {
-            response = transport.send(new EventBatchRequest(List.copyOf(bufferedEvents)));
+            response = transport.send(new EventBatchRequest(batch));
         } catch (RuntimeException error) {
             response = new TransportResponse(500, null);
         }
         if (response.isSuccess()) {
+            IngestionAcknowledgementDecision acknowledgement =
+                    IngestionAcknowledgementDecision.decide(response.body(), batch.size());
+            if (acknowledgement.kind() == IngestionAcknowledgementDecision.Kind.PROTOCOL_FAILURE) {
+                consecutiveFailures++;
+                status = DebugBundleStatus.DEGRADED;
+                long retryAfterMillis = boundedRetryAfterMillis(response.retryAfterMillis());
+                nextRetryAtMillis = now() + retryAfterMillis;
+                scheduleFlush(retryAfterMillis);
+                return;
+            }
+            if (acknowledgement.kind() == IngestionAcknowledgementDecision.Kind.LEGACY) {
+                bufferedEvents.clear();
+                firstBufferedAtMillis = 0L;
+                nextRetryAtMillis = 0L;
+                consecutiveFailures = 0;
+                status = DebugBundleStatus.HEALTHY;
+                lastEventAt = Optional.of(Instant.ofEpochMilli(now()));
+                cancelFlush();
+                return;
+            }
+
+            List<Map<String, Object>> retryableEvents = acknowledgement.retryableIndices().stream()
+                    .filter(index -> index >= 0 && index < batch.size())
+                    .map(batch::get)
+                    .toList();
             bufferedEvents.clear();
-            firstBufferedAtMillis = 0L;
+            bufferedEvents.addAll(retryableEvents);
+            firstBufferedAtMillis = retryableEvents.isEmpty() ? 0L : now();
+            if (acknowledgement.accepted() > 0) {
+                lastEventAt = Optional.of(Instant.ofEpochMilli(now()));
+            }
+            if (!retryableEvents.isEmpty()) {
+                consecutiveFailures++;
+                status = DebugBundleStatus.DEGRADED;
+                long retryAfterMillis = boundedRetryAfterMillis(response.retryAfterMillis());
+                nextRetryAtMillis = now() + retryAfterMillis;
+                scheduleFlush(retryAfterMillis);
+                return;
+            }
             nextRetryAtMillis = 0L;
-            consecutiveFailures = 0;
-            status = DebugBundleStatus.HEALTHY;
-            lastEventAt = Optional.of(Instant.ofEpochMilli(now()));
+            consecutiveFailures = acknowledgement.accepted() > 0 ? 0 : 3;
+            status = acknowledgement.accepted() > 0
+                    ? DebugBundleStatus.HEALTHY
+                    : DebugBundleStatus.DISCONNECTED;
             cancelFlush();
             return;
         }
@@ -397,7 +458,10 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     private void enqueueSuppressionAggregates() {
         for (EventSuppressionTracker.SuppressionAggregate aggregate : suppressionTracker.drainAggregates(now())) {
-            bufferEventInternal(eventFactory.buildErrorSuppressedEvent(aggregate));
+            Map<String, Object> event = prepareEvent(eventFactory.buildErrorSuppressedEvent(aggregate));
+            if (event != null) {
+                bufferEventInternal(event);
+            }
         }
     }
 
@@ -412,7 +476,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "1.2.0",
+                    "1.3.0",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));
@@ -588,13 +652,25 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private void emitStandaloneProbeEvents(String label, Object data, ProbeCaptureDecision decision) {
-        if (decision.directives().isEmpty()
-                || remoteConfigSnapshot.capturePolicy().captureProbeEvents() != CapturePolicy.CaptureProbeEventsMode.STANDALONE_WHEN_ACTIVATED) {
+        if (decision.directives().isEmpty()) {
             return;
         }
 
         for (RemoteProbeDirective directive : decision.directives()) {
-            bufferEventInternal(eventFactory.buildProbeEvent(label, data, directive.id(), directive.labelPattern(), mergedContext(Map.of())));
+            Map<String, Object> event = prepareEvent(
+                    eventFactory.buildProbeEvent(
+                            label,
+                            data,
+                            directive.id(),
+                            directive.labelPattern(),
+                            mergedContext(Map.of())
+                    )
+            );
+            if (event != null
+                    && remoteConfigSnapshot.capturePolicy().captureProbeEvents()
+                    == CapturePolicy.CaptureProbeEventsMode.STANDALONE_WHEN_ACTIVATED) {
+                bufferEventInternal(event);
+            }
         }
     }
 

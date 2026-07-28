@@ -39,7 +39,7 @@ final class HttpTransport implements DebugBundleTransport {
                     .build();
 
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            return new TransportResponse(response.statusCode(), parseRetryAfterMillis(response));
+            return new TransportResponse(response.statusCode(), parseRetryAfterMillis(response), response.body());
         } catch (IOException | InterruptedException | IllegalArgumentException error) {
             if (error instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

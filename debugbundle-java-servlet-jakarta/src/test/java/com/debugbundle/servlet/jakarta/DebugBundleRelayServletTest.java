@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockServletConfig;
+import org.springframework.mock.web.MockServletContext;
 
 class DebugBundleRelayServletTest {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -83,6 +85,87 @@ class DebugBundleRelayServletTest {
         servlet.doPost(request, response);
 
         assertThat(response.getStatus()).isEqualTo(413);
+    }
+
+    @Test
+    void relayServletHandlesPreflightAndCopiesCorsHeaders(@TempDir Path tempDir) throws Exception {
+        DebugBundleRelayServlet servlet = new DebugBundleRelayServlet(new DebugBundleBrowserRelay(
+                new DebugBundleBrowserRelay.Config(
+                        null, null, "local-only", tempDir.toString(), 60, true,
+                        tempDir.resolve("spool").toString(), List.of("https://app.example.com")),
+                events -> true
+        ));
+        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/debugbundle/browser");
+        request.addHeader("Origin", "https://app.example.com");
+        request.addHeader("Host", "app.example.com");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        servlet.doOptions(request, response);
+
+        assertThat(response.getStatus()).isEqualTo(204);
+        assertThat(response.getHeader("Access-Control-Allow-Origin")).isEqualTo("https://app.example.com");
+        assertThat(response.getContentAsByteArray()).isEmpty();
+    }
+
+    @Test
+    void relayServletReturnsSafeBadRequestWhenBodyReadFails(@TempDir Path tempDir) throws Exception {
+        DebugBundleRelayServlet servlet = new DebugBundleRelayServlet(new DebugBundleBrowserRelay(
+                new DebugBundleBrowserRelay.Config(
+                        null, null, "local-only", tempDir.toString(), 60, true,
+                        tempDir.resolve("spool").toString(), List.of()),
+                events -> true
+        ));
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/debugbundle/browser") {
+            @Override
+            public jakarta.servlet.ServletInputStream getInputStream() {
+                return new jakarta.servlet.ServletInputStream() {
+                    @Override
+                    public int read() throws java.io.IOException {
+                        throw new java.io.IOException("unreadable");
+                    }
+
+                    @Override
+                    public boolean isFinished() {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean isReady() {
+                        return true;
+                    }
+
+                    @Override
+                    public void setReadListener(jakarta.servlet.ReadListener readListener) {
+                    }
+                };
+            }
+        };
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        servlet.doPost(request, response);
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(response.getContentAsString()).contains("Relay request body could not be read.");
+    }
+
+    @Test
+    void relayServletInitializesFromServletAndContextParameters(@TempDir Path tempDir) throws Exception {
+        MockServletContext context = new MockServletContext();
+        context.addInitParameter("debugbundle.project-mode", "local-only");
+        context.addInitParameter("debugbundle.local-events-dir", tempDir.toString());
+        DebugBundleRelayServlet servlet = new DebugBundleRelayServlet();
+        servlet.init(new MockServletConfig(context));
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/debugbundle/browser");
+        request.setRemoteAddr("127.0.0.5");
+        request.addHeader("Origin", "https://app.example.com");
+        request.addHeader("Host", "app.example.com");
+        request.setContentType("application/json");
+        request.setContent("{\"batch\":[]}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        servlet.doPost(request, response);
+
+        assertThat(response.getStatus()).isEqualTo(202);
     }
 
     private Map<String, Object> validFrontendExceptionEvent() {

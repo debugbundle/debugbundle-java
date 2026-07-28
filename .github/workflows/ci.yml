@@ -24,3 +24,13 @@ jobs:
 
       - name: App-driven smoke
         run: make smoke JAVA_VERSION=${{ matrix.java-version }}
+
+  wildfly:
+    name: WildFly Jakarta and Javax multi-WAR smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run app-server smoke
+        run: make smoke-wildfly JAVA_VERSION=21

@@ -17,7 +17,7 @@ RUN apt-get update \
 ENV JBOSS_HOME=/opt/jboss/wildfly
 WORKDIR /opt/jboss/wildfly
 
-COPY --chown=jboss:jboss debugbundle-java-agent/target/debugbundle-java-agent-1.3.0.jar /opt/debugbundle/debugbundle-java-agent.jar
+COPY --chown=jboss:jboss debugbundle-java-agent/target/debugbundle-java-agent-1.3.1.jar /opt/debugbundle/debugbundle-java-agent.jar
 COPY --chown=jboss:jboss smoke/wildfly-multiwar/debugbundle.properties /opt/debugbundle/debugbundle.properties
 COPY --chown=jboss:jboss smoke/wildfly-multiwar/orders/target/orders.war standalone/deployments/orders.war
 COPY --chown=jboss:jboss smoke/wildfly-multiwar/identity/target/identity.war standalone/deployments/identity.war

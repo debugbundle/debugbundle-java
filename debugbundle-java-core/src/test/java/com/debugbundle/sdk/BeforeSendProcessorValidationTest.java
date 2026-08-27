@@ -17,7 +17,7 @@ class BeforeSendProcessorValidationTest {
                 "handled", true,
                 "request", Map.of(),
                 "response", Map.of(),
-                "runtime", Map.of(),
+                "runtime", validRuntime(),
                 "probe_data", Map.of()
         ));
         assertAccepted("request_event", map(
@@ -174,6 +174,30 @@ class BeforeSendProcessorValidationTest {
     }
 
     @Test
+    void rejectsNonCanonicalRuntimeMemoryWithoutDroppingTheOriginalEvent() {
+        Map<String, Object> legacyRuntime = map(
+                "version", "17.0.15",
+                "memory", map(
+                        "max_bytes", 1_073_741_824L,
+                        "total_bytes", 536_870_912L,
+                        "free_bytes", 134_217_728L
+                ),
+                "framework_extras", null,
+                "jvm_name", "OpenJDK 64-Bit Server VM"
+        );
+        assertRejected(event("backend_exception", validBackendExceptionPayload(legacyRuntime)));
+
+        Map<String, Object> incompleteMemory = validRuntime();
+        incompleteMemory.put("memory", map(
+                "rss", null,
+                "heap_total", 536_870_912L,
+                "heap_used", 402_653_184L,
+                "external", null
+        ));
+        assertRejected(event("backend_exception", validBackendExceptionPayload(incompleteMemory)));
+    }
+
+    @Test
     void nullHookDropAndHookFailureRemainSafe() {
         Map<String, Object> original = event("log_event", validLogPayload());
 
@@ -201,7 +225,7 @@ class BeforeSendProcessorValidationTest {
                 "event_id", "11111111-1111-4111-8111-111111111111",
                 "event_type", type,
                 "sdk_name", "@debugbundle/sdk-java",
-                "sdk_version", "1.3.0",
+                "sdk_version", "1.3.1",
                 "service", Map.of("name", "checkout", "environment", "test"),
                 "occurred_at", "2026-03-14T00:00:00Z",
                 "payload", payload
@@ -210,6 +234,35 @@ class BeforeSendProcessorValidationTest {
 
     private static Map<String, Object> validLogPayload() {
         return map("level", "warning", "message", "slow", "attributes", Map.of());
+    }
+
+    private static Map<String, Object> validBackendExceptionPayload(Map<String, Object> runtime) {
+        return map(
+                "name", "IllegalStateException",
+                "message", "failed",
+                "stack", "stack",
+                "handled", true,
+                "request", Map.of(),
+                "response", Map.of(),
+                "runtime", runtime
+        );
+    }
+
+    private static Map<String, Object> validRuntime() {
+        return map(
+                "version", "17.0.15",
+                "memory", map(
+                        "rss", null,
+                        "heap_total", 536_870_912L,
+                        "heap_used", 402_653_184L,
+                        "external", null,
+                        "peak", null
+                ),
+                "framework_extras", map(
+                        "jvm_name", "OpenJDK 64-Bit Server VM",
+                        "jvm_max_bytes", 1_073_741_824L
+                )
+        );
     }
 
     @SuppressWarnings("unchecked")

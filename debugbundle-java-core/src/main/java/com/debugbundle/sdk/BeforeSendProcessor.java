@@ -40,6 +40,11 @@ final class BeforeSendProcessor {
     private static final Set<String> ROOT_FIELDS = Set.of(
             "schema_version", "event_id", "event_type", "project_token", "project_id", "sdk_name", "sdk_version",
             "service", "occurred_at", "correlation", "context", "payload");
+    private static final Set<String> RUNTIME_FIELDS = Set.of(
+            "version", "platform", "arch", "pid", "cwd", "uptime_sec", "hostname", "thread_id",
+            "framework_version", "memory", "framework_extras");
+    private static final Set<String> RUNTIME_MEMORY_FIELDS =
+            Set.of("rss", "heap_total", "heap_used", "external", "peak");
 
     private BeforeSendProcessor() {
     }
@@ -96,7 +101,7 @@ final class BeforeSendProcessor {
                     && payload.get("handled") instanceof Boolean
                     && payload.get("request") instanceof Map<?, ?>
                     && payload.get("response") instanceof Map<?, ?>
-                    && payload.get("runtime") instanceof Map<?, ?>
+                    && validRuntime(payload.get("runtime"))
                     && optionalMap(payload, "probe_data");
             case "request_event" -> hasNonBlankStrings(payload, "method", "path")
                     && payload.get("query") instanceof Map<?, ?>
@@ -131,6 +136,61 @@ final class BeforeSendProcessor {
 
     private static boolean optionalMap(Map<?, ?> payload, String field) {
         return !payload.containsKey(field) || payload.get(field) instanceof Map<?, ?>;
+    }
+
+    private static boolean validRuntime(Object value) {
+        if (!(value instanceof Map<?, ?> runtime)
+                || !RUNTIME_FIELDS.containsAll(runtime.keySet())
+                || !nonBlankString(runtime.get("version"))) {
+            return false;
+        }
+        return optionalNullableNonBlankString(runtime, "platform")
+                && optionalNullableNonBlankString(runtime, "arch")
+                && optionalNullableNonNegativeInteger(runtime, "pid")
+                && optionalNullableNonBlankString(runtime, "cwd")
+                && optionalNullableNonNegativeNumber(runtime, "uptime_sec")
+                && optionalNullableNonBlankString(runtime, "hostname")
+                && optionalNullableThreadId(runtime, "thread_id")
+                && optionalNullableNonBlankString(runtime, "framework_version")
+                && optionalRuntimeMemory(runtime)
+                && optionalNullableMap(runtime, "framework_extras");
+    }
+
+    private static boolean optionalRuntimeMemory(Map<?, ?> runtime) {
+        if (!runtime.containsKey("memory") || runtime.get("memory") == null) {
+            return true;
+        }
+        if (!(runtime.get("memory") instanceof Map<?, ?> memory)
+                || !RUNTIME_MEMORY_FIELDS.containsAll(memory.keySet())
+                || !memory.keySet().containsAll(RUNTIME_MEMORY_FIELDS)) {
+            return false;
+        }
+        return RUNTIME_MEMORY_FIELDS.stream().allMatch(field ->
+                memory.get(field) == null || nonNegativeNumber(memory.get(field)));
+    }
+
+    private static boolean optionalNullableNonBlankString(Map<?, ?> value, String field) {
+        return !value.containsKey(field) || value.get(field) == null || nonBlankString(value.get(field));
+    }
+
+    private static boolean optionalNullableNonNegativeNumber(Map<?, ?> value, String field) {
+        return !value.containsKey(field) || value.get(field) == null || nonNegativeNumber(value.get(field));
+    }
+
+    private static boolean optionalNullableNonNegativeInteger(Map<?, ?> value, String field) {
+        return !value.containsKey(field) || value.get(field) == null || nonNegativeInteger(value.get(field));
+    }
+
+    private static boolean optionalNullableThreadId(Map<?, ?> value, String field) {
+        Object candidate = value.get(field);
+        return !value.containsKey(field)
+                || candidate == null
+                || candidate instanceof String
+                || candidate instanceof Number number && Double.isFinite(number.doubleValue());
+    }
+
+    private static boolean optionalNullableMap(Map<?, ?> value, String field) {
+        return !value.containsKey(field) || value.get(field) == null || value.get(field) instanceof Map<?, ?>;
     }
 
     private static boolean nonNegativeNumber(Object value) {

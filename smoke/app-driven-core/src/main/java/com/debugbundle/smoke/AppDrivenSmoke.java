@@ -64,6 +64,14 @@ public final class AppDrivenSmoke {
                 assertContains(payload, "\"trace_id\":\"" + TRACE_ID + "\"");
                 assertContains(payload, "\"request_id\":\"" + REQUEST_ID + "\"");
                 assertContains(payload, "\"message\":\"java smoke failure\"");
+                assertContains(payload, "\"memory\":{\"rss\":null,\"heap_total\":");
+                assertContains(payload, "\"heap_used\":");
+                assertContains(payload, "\"external\":null,\"peak\":null}");
+                assertContains(payload, "\"framework_extras\":{\"jvm_name\":");
+                assertContains(payload, "\"jvm_max_bytes\":");
+                assertDoesNotContain(payload, "\"max_bytes\"");
+                assertDoesNotContain(payload, "\"total_bytes\"");
+                assertDoesNotContain(payload, "\"free_bytes\"");
                 System.out.println("App-driven smoke passed.");
             } finally {
                 client.close();
@@ -73,6 +81,10 @@ public final class AppDrivenSmoke {
 
     private static void assertContains(String payload, String expected) {
         assertCondition(payload.contains(expected), "missing expected payload fragment: " + expected + " in " + payload);
+    }
+
+    private static void assertDoesNotContain(String payload, String unexpected) {
+        assertCondition(!payload.contains(unexpected), "unexpected payload fragment: " + unexpected + " in " + payload);
     }
 
     private static void assertCondition(boolean condition, String message) {

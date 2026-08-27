@@ -76,7 +76,7 @@ class HttpClientTransportTest {
                 endpoint("/v1/sdk/config"),
                 "dbundle_proj_test",
                 "@debugbundle/sdk-java",
-                "1.3.0",
+                "1.3.1",
                 "\"cfg-v1\"",
                 Duration.ofSeconds(2)
         ));
@@ -86,7 +86,7 @@ class HttpClientTransportTest {
         assertThat(response.etag()).isEqualTo("\"cfg-v2\"");
         assertThat(authorization).hasValue("Bearer dbundle_proj_test");
         assertThat(sdkName).hasValue("@debugbundle/sdk-java");
-        assertThat(sdkVersion).hasValue("1.3.0");
+        assertThat(sdkVersion).hasValue("1.3.1");
         assertThat(ifNoneMatch).hasValue("\"cfg-v1\"");
     }
 

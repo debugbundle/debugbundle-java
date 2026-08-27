@@ -24,14 +24,20 @@ final class RuntimeFacts {
         facts.put("uptime_sec", (System.nanoTime() - STARTED_AT_NANOS) / 1_000_000_000.0d);
         facts.put("hostname", hostname());
         facts.put("thread_id", Thread.currentThread().getId());
-        facts.put("memory", Map.of(
-                "max_bytes", runtime.maxMemory(),
-                "total_bytes", runtime.totalMemory(),
-                "free_bytes", runtime.freeMemory()
-        ));
+        long heapTotal = runtime.totalMemory();
+        long heapFree = runtime.freeMemory();
+        Map<String, Object> memory = new LinkedHashMap<>();
+        memory.put("rss", null);
+        memory.put("heap_total", heapTotal);
+        memory.put("heap_used", Math.max(0L, heapTotal - heapFree));
+        memory.put("external", null);
+        memory.put("peak", null);
+        facts.put("memory", memory);
         facts.put("framework_version", null);
-        facts.put("framework_extras", null);
-        facts.put("jvm_name", ManagementFactory.getRuntimeMXBean().getVmName());
+        Map<String, Object> frameworkExtras = new LinkedHashMap<>();
+        frameworkExtras.put("jvm_name", ManagementFactory.getRuntimeMXBean().getVmName());
+        frameworkExtras.put("jvm_max_bytes", runtime.maxMemory());
+        facts.put("framework_extras", frameworkExtras);
         return facts;
     }
 

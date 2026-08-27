@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.3.1 - 2026-08-27
+
+- Emit Java runtime memory using the canonical `rss`, `heap_total`, `heap_used`, `external`, and `peak` fields, and keep JVM-specific facts under `framework_extras` so captured exceptions pass strict ingestion validation.
+- Validate `beforeSend` runtime mutations against the canonical runtime-memory shape before queueing them.
+
 ## 1.3.0 - 2026-07-28
 
 - Added the universal `DebugBundleBeforeSend` event hook and canonical object wrapping for scalar/list probe values.

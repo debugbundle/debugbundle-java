@@ -394,7 +394,7 @@ Supported validation lanes are Java 17, Java 21, Java 25, and Java 26.
 
 ## Release
 
-GitHub Actions publishes stable releases to Maven Central through `.github/workflows/release.yml`. The workflow expects a stable project version committed in all published `pom.xml` files and runs `mvn clean deploy -Prelease` with source, javadoc, and signed artifacts.
+GitHub Actions publishes stable releases to Maven Central through `.github/workflows/release.yml`. The workflow expects a stable project version committed in all published `pom.xml` files and runs `mvn clean deploy -Prelease` with source, javadoc, and signed artifacts. Rerunning the workflow for a fully published version skips Maven deployment while still reconciling the GitHub release and running the published-artifact smoke test.
 
 ## Documentation
 

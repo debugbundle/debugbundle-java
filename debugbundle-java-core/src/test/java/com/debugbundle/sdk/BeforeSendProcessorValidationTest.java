@@ -225,7 +225,7 @@ class BeforeSendProcessorValidationTest {
                 "event_id", "11111111-1111-4111-8111-111111111111",
                 "event_type", type,
                 "sdk_name", "@debugbundle/sdk-java",
-                "sdk_version", "1.3.1",
+                "sdk_version", "1.4.0",
                 "service", Map.of("name", "checkout", "environment", "test"),
                 "occurred_at", "2026-03-14T00:00:00Z",
                 "payload", payload

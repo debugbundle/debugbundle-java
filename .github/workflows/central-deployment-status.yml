@@ -1,0 +1,33 @@
+name: Inspect Central Deployment
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Existing Central upload UUID to inspect
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read accepted deployment status
+        env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          python3 - <<'PYTHON'
+          import base64, json, os, urllib.request, uuid
+          deployment_id = str(uuid.UUID(os.environ["DEPLOYMENT_ID"]))
+          credentials = (os.environ["CENTRAL_USERNAME"] + ":" + os.environ["CENTRAL_PASSWORD"]).encode()
+          authorization = "Bearer " + base64.b64encode(credentials).decode()
+          request = urllib.request.Request(
+              "https://central.sonatype.com/api/v1/publisher/status?id=" + deployment_id,
+              data=b"", headers={"Authorization": authorization}, method="POST")
+          with urllib.request.urlopen(request, timeout=30) as response:
+              status = json.load(response)
+          print(json.dumps({key: status.get(key) for key in
+              ["deploymentId", "deploymentName", "deploymentState", "purls", "errors"]}, indent=2))
+          PYTHON

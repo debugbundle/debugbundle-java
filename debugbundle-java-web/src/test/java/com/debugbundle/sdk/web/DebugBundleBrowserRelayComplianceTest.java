@@ -116,6 +116,42 @@ class DebugBundleBrowserRelayComplianceTest {
         assertExpectedForwardRequest(forwarder, fixtureCase);
     }
 
+    @Test
+    void preservesBrowserSourceAndStructuralContextThroughLocalRelay(@TempDir Path tempDir) throws Exception {
+        Map<String, Object> fixtures = OBJECT_MAPPER.readValue(Files.readString(fixturePath()), MAP_TYPE);
+        Map<String, Object> fixture = objectList(fixtures.get("cases")).stream()
+                .filter(item -> "valid-browser-batch".equals(item.get("id"))).findFirst().orElseThrow();
+        Map<String, Object> request = objectMap(fixture.get("request"));
+        Map<String, Object> event = objectList(objectMap(request.get("bodyJson")).get("batch")).get(0);
+        Map<String, Object> payload = objectMap(event.get("payload"));
+        Map<String, Object> browserEvent = Map.of(
+                "kind", "window_error", "opaque", false, "file_name", "https://web.example/app.js",
+                "line_number", 42, "column_number", 9,
+                "page", Map.of("url", "https://web.example/checkout", "ready_state", "complete"));
+        payload.put("browser_event", browserEvent);
+        payload.put("rejection_reason", Map.of("kind", "error", "name", "TypeError", "message", "Save failed"));
+        payload.put("authorization", "must-be-stripped");
+        event.put("payload", payload);
+        DebugBundleBrowserRelay relay = new DebugBundleBrowserRelay(new DebugBundleBrowserRelay.Config(
+                null, null, "local-only", tempDir.resolve("events").toString(), 60, true,
+                tempDir.resolve("spool").toString(), List.of(), "trusted-web", "production"));
+        DebugBundleBrowserRelay.Response response = relay.handle(requestFrom(request),
+                OBJECT_MAPPER.writeValueAsBytes(Map.of("batch", List.of(event))));
+        assertThat(response.status()).isEqualTo(202);
+        List<Path> files = eventFiles(tempDir);
+        assertThat(files).hasSize(1);
+        String serialized = Files.readString(files.get(0));
+        Map<String, Object> stored = OBJECT_MAPPER.readValue(serialized, EVENT_LIST_TYPE).get(0);
+        Map<String, Object> storedPayload = objectMap(stored.get("payload"));
+        assertThat(storedPayload).containsEntry("browser_event", browserEvent)
+                .containsEntry("route", payload.get("route"))
+                .containsEntry("stack", payload.get("stack"))
+                .containsEntry("breadcrumbs", payload.get("breadcrumbs"))
+                .containsEntry("rejection_reason", payload.get("rejection_reason"));
+        assertThat(objectMap(stored.get("service"))).containsEntry("name", "trusted-web");
+        assertThat(serialized).doesNotContain("must-be-stripped");
+    }
+
     private void assertSequenceCase(Path caseDir, Map<String, Object> fixtureCase) throws Exception {
         RecordingForwarder forwarder = new RecordingForwarder();
         AtomicLong currentMillis = new AtomicLong(0L);

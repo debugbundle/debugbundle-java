@@ -88,6 +88,38 @@ jobs:
           gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
+      - name: Verify Maven signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected="A2AA7BC54CA03EBFED79353F4605E877CD8B9B3C"
+          imported="$({
+            gpg --batch --with-colons --fingerprint --list-secret-keys
+          } | awk -F: '$1 == "sec" { primary = 1; next } primary && $1 == "fpr" { print $10; primary = 0 }')"
+
+          if ! grep -Fxq "$expected" <<<"$imported"; then
+            echo "expected_maven_signing_key_not_imported:$expected" >&2
+            exit 1
+          fi
+
+          public_key_home="$(mktemp -d)"
+          trap 'rm -rf "$public_key_home"' EXIT
+          chmod 700 "$public_key_home"
+          GNUPGHOME="$public_key_home" gpg --batch \
+            --keyserver hkps://keyserver.ubuntu.com \
+            --recv-keys "$expected"
+          published="$({
+            GNUPGHOME="$public_key_home" gpg --batch --with-colons --fingerprint --list-keys "$expected"
+          } | awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; exit }')"
+
+          if [[ "$published" != "$expected" ]]; then
+            echo "maven_signing_public_key_not_published:$expected" >&2
+            exit 1
+          fi
+
+          echo "MAVEN_GPG_KEYNAME=${expected}!" >> "$GITHUB_ENV"
+
       - name: Check published package state
         id: published_state
         shell: bash
@@ -177,7 +209,7 @@ jobs:
 
       - name: Publish to Maven Central
         if: steps.published_state.outputs.state == 'none'
-        run: mvn -B -ntp clean deploy -Prelease
+        run: mvn -B -ntp clean deploy -Prelease -Dgpg.keyname="${MAVEN_GPG_KEYNAME}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3

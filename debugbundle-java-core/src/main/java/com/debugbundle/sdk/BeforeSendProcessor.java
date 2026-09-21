@@ -65,7 +65,7 @@ final class BeforeSendProcessor {
         }
     }
 
-    private static boolean isValid(Map<String, Object> event) {
+    static boolean isValid(Map<String, Object> event) {
         if (!ROOT_FIELDS.containsAll(event.keySet())) {
             return false;
         }

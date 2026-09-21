@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java-version: ["17", "21", "25", "26"]
+        java-version: ["17", "21", "25", "26", "27"]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -24,6 +24,13 @@ jobs:
 
       - name: App-driven smoke
         run: make smoke JAVA_VERSION=${{ matrix.java-version }}
+
+  spring-boot-current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify current Spring Boot on current Java
+        run: make verify JAVA_VERSION=27 SPRING_BOOT_VERSION=4.1.1
 
   wildfly:
     name: WildFly Jakarta and Javax multi-WAR smoke

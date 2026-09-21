@@ -1,6 +1,7 @@
 package com.debugbundle.sdk.web;
 
 import com.debugbundle.sdk.DebugBundleFileWriter;
+import com.debugbundle.sdk.TelemetryPrivacy;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -273,7 +274,20 @@ public final class DebugBundleBrowserRelay {
         }
 
         sanitized.put("payload", stripProtectedFields(payload, 0));
-        return sanitized;
+        try {
+            if (!TelemetryPrivacy.hasSafeEventIdentity(sanitized, Set.of())) return null;
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("service", sanitizedService);
+            fields.put("payload", sanitized.get("payload"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(fields, Set.of());
+            if (!(safe.get("service") instanceof Map<?, ?>) || !(safe.get("payload") instanceof Map<?, ?>)) return null;
+            sanitized.put("service", safe.get("service"));
+            sanitized.put("payload", safe.get("payload"));
+            return sanitized;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private Object stripProtectedFields(Object value, int depth) {

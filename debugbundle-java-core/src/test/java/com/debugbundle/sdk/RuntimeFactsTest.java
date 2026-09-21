@@ -58,7 +58,7 @@ class RuntimeFactsTest {
         Map<String, Object> accepted = BeforeSendProcessor.apply(event, value -> value);
 
         assertThat(accepted).isNotNull().isNotSameAs(event);
-        assertThat(accepted).containsEntry("sdk_version", "1.4.0");
+        assertThat(accepted).containsEntry("sdk_version", "2.0.0");
         Map<String, Object> payload = (Map<String, Object>) accepted.get("payload");
         Map<String, Object> runtime = (Map<String, Object>) payload.get("runtime");
         assertThat(runtime).doesNotContainKey("jvm_name");

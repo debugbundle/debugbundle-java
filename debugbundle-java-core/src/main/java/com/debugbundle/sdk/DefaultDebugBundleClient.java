@@ -169,7 +169,13 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             return;
         }
 
-        persistentContext.put(key, value);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(Map.of(key, value), sensitiveFields);
+            if (safe.containsKey(key)) persistentContext.put(key, safe.get(key));
+        } catch (RuntimeException ignored) {
+            // Unsupported context must not enter SDK-owned retention.
+        }
     }
 
     @Override
@@ -329,7 +335,30 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private Map<String, Object> prepareEvent(Map<String, Object> event) {
-        return BeforeSendProcessor.apply(event, config.beforeSend());
+        Map<String, Object> protectedInput = protectEvent(event);
+        if (protectedInput == null) return null;
+        Map<String, Object> prepared = BeforeSendProcessor.apply(protectedInput, config.beforeSend());
+        return prepared == null ? null : protectEvent(prepared);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> protectEvent(Map<String, Object> event) {
+        try {
+            if (!TelemetryPrivacy.hasSafeEventIdentity(event, sensitiveFields)) return null;
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("service", event.get("service"));
+            fields.put("payload", event.get("payload"));
+            fields.put("context", event.get("context"));
+            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(fields, sensitiveFields);
+            if (!(safe.get("service") instanceof Map<?, ?>) || !(safe.get("payload") instanceof Map<?, ?>)) return null;
+            Map<String, Object> protectedEvent = new LinkedHashMap<>(event);
+            protectedEvent.put("service", safe.get("service"));
+            protectedEvent.put("payload", safe.get("payload"));
+            if (event.containsKey("context")) protectedEvent.put("context", safe.get("context"));
+            return BeforeSendProcessor.isValid(protectedEvent) ? protectedEvent : null;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private void bufferEvent(Map<String, Object> event) {
@@ -346,6 +375,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private void bufferEventInternal(Map<String, Object> event) {
+        event = protectEvent(event);
+        if (event == null) return;
         if (bufferedEvents.isEmpty()) {
             firstBufferedAtMillis = now();
             scheduleFlush(config.flushInterval().toMillis());
@@ -476,7 +507,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "1.4.0",
+                    "2.0.0",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));

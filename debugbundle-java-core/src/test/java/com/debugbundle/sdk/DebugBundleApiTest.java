@@ -115,6 +115,41 @@ class DebugBundleApiTest {
     }
 
     @Test
+    void mandatoryProtectionCoversContextHookAndFinalTransport() {
+        FakeTransport transport = new FakeTransport();
+        List<String> hookInputs = new ArrayList<>();
+        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
+                DebugBundleConfig.builder()
+                        .projectToken("dbundle_proj_test")
+                        .beforeSend(event -> {
+                            hookInputs.add(event.toString());
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> payload = (Map<String, Object>) event.get("payload");
+                            payload.put("message", "token=SYNTHETIC_HOOK_SECRET");
+                            return event;
+                        }).build(),
+                transport,
+                System::currentTimeMillis
+        );
+        client.setContext("user_password", "SYNTHETIC_CONTEXT_SECRET");
+        client.captureMessage("Authorization: Bearer SYNTHETIC_CAPTURE_SECRET", LogLevel.ERROR, Map.of("safe", "ok"));
+        client.flush();
+
+        assertThat(hookInputs).hasSize(1);
+        assertThat(hookInputs.get(0)).doesNotContain("SYNTHETIC_");
+        assertThat(transport.calls()).hasSize(1);
+        Map<String, Object> event = transport.calls().get(0).events().get(0);
+        assertThat(event.toString()).doesNotContain("SYNTHETIC_");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) event.get("payload");
+        assertThat(payload.get("message")).isEqualTo("token=[REDACTED]");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> attributes = (Map<String, Object>) payload.get("attributes");
+        assertThat(attributes.get("user_password")).isEqualTo("[REDACTED]");
+        assertThat(event).doesNotContainKey("project_token");
+    }
+
+    @Test
     void beforeSendDropInvalidFailureAndSamplingAreSafe() {
         FakeTransport transport = new FakeTransport();
         AtomicInteger calls = new AtomicInteger();

@@ -2,13 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [2.0.0] - 2026-09-21
+
+### Security
+
+- Enforce native `telemetry-privacy-v1` checks before context and probe retention, after `beforeSend`, and before buffering, transport, and browser relay. Custom keys extend the mandatory baseline.
+
+### Changed
+
+- Add source verification lanes for Java 27 and Spring Boot 4.1 while retaining older Java and Spring Boot 3 compatibility.
+
 ## [1.4.0] - 2026-09-12
 
 ### Changed
 
 - License first-party SDK code under Apache-2.0 and ship consistent package licensing metadata and license text.
-
-## Unreleased
 
 ## 1.3.1 - 2026-08-27
 

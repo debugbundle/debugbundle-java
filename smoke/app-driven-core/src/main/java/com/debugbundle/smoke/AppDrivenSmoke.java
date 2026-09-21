@@ -48,7 +48,7 @@ public final class AppDrivenSmoke {
                                 "X-DebugBundle-Trace-Id", TRACE_ID,
                                 "X-Request-Id", REQUEST_ID
                         ),
-                        "query", Map.of()
+                        "query", Map.of("note", "password=PACKED_SMOKE_SECRET")
                 ));
 
                 client.captureException(new IllegalStateException("java smoke failure"));
@@ -56,6 +56,7 @@ public final class AppDrivenSmoke {
                 client.flush().join();
 
                 String payload = server.awaitPayload();
+                assertDoesNotContain(payload, "PACKED_SMOKE_SECRET");
                 assertCondition(server.requestCount() == 1, "expected one ingestion request");
                 assertCondition(client.status() == DebugBundleStatus.HEALTHY, "expected healthy SDK status");
                 assertContains(payload, "\"service\":{\"name\":\"" + SERVICE + "\"");

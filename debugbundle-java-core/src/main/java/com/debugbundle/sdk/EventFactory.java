@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "1.4.0";
+    private static final String SDK_VERSION = "2.0.0";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -114,13 +114,19 @@ final class EventFactory {
     }
 
     void bufferProbe(String label, Object data) {
-        List<Map<String, Object>> entries = probeBuffers.computeIfAbsent(label, ignored -> new ArrayList<>());
+        String safeLabel;
+        try {
+            safeLabel = (String) TelemetryPrivacy.protect(label, sensitiveFields);
+        } catch (RuntimeException ignored) {
+            return;
+        }
+        List<Map<String, Object>> entries = probeBuffers.computeIfAbsent(safeLabel, ignored -> new ArrayList<>());
         if (entries.isEmpty() && probeBuffers.size() > config.maxProbeLabels()) {
-            probeBuffers.remove(label);
+            probeBuffers.remove(safeLabel);
             return;
         }
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("label", label);
+        entry.put("label", safeLabel);
         entry.put("data", normalizeProbeData(data));
         entry.put("timestamp", isoTimestamp(now()));
         entry.put("activation_id", null);
@@ -132,7 +138,12 @@ final class EventFactory {
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> normalizeProbeData(Object data) {
-        Object redacted = redact(data);
+        Object redacted;
+        try {
+            redacted = TelemetryPrivacy.protect(redact(data), sensitiveFields);
+        } catch (RuntimeException ignored) {
+            redacted = "[REDACTED]";
+        }
         if (redacted instanceof Map<?, ?>) {
             return new LinkedHashMap<>((Map<String, Object>) redacted);
         }

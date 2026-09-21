@@ -22,6 +22,32 @@ class DebugBundleBrowserRelayComplianceTest {
     private static final TypeReference<List<Map<String, Object>>> EVENT_LIST_TYPE = new TypeReference<>() {};
 
     @Test
+    void scrubsLegacyBrowserEvidenceBeforeLocalFile(@TempDir Path tempDir) throws Exception {
+        Map<String, Object> fixtures = OBJECT_MAPPER.readValue(Files.readString(fixturePath()), MAP_TYPE);
+        Map<String, Object> fixture = objectList(fixtures.get("cases")).stream()
+                .filter(item -> "valid-browser-batch".equals(item.get("id"))).findFirst().orElseThrow();
+        Map<String, Object> request = objectMap(fixture.get("request"));
+        Map<String, Object> event = objectList(objectMap(request.get("bodyJson")).get("batch")).get(0);
+        Map<String, Object> payload = objectMap(event.get("payload"));
+        payload.put("message", "password=SYNTHETIC_RELAY_SECRET");
+        payload.put("data", Map.of("apiKey", "SYNTHETIC_NESTED_SECRET"));
+        event.put("payload", payload);
+        Path directory = Files.createDirectories(tempDir.resolve("events"));
+        DebugBundleBrowserRelay relay = new DebugBundleBrowserRelay(new DebugBundleBrowserRelay.Config(
+                "dbundle_proj_server", null, "local-only", directory.toString(), 60, true,
+                tempDir.resolve("spool").toString(), List.of()
+        ));
+        DebugBundleBrowserRelay.Response response = relay.handle(requestFrom(request), requestBody(request));
+
+        assertThat(response.status()).isEqualTo(202);
+        try (var files = Files.list(directory)) {
+            Path stored = files.filter(path -> path.toString().endsWith(".events.json")).findFirst().orElseThrow();
+            String body = Files.readString(stored);
+            assertThat(body).doesNotContain("SYNTHETIC_").contains("password=[REDACTED]");
+        }
+    }
+
+    @Test
     void relayMatchesSharedComplianceFixtures(@TempDir Path tempDir) throws Exception {
         Map<String, Object> fixtures = OBJECT_MAPPER.readValue(Files.readString(fixturePath()), MAP_TYPE);
 

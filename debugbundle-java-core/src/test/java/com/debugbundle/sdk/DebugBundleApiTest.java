@@ -782,10 +782,14 @@ class DebugBundleApiTest {
                 clock::nowMillis
         );
 
+        List<RuntimeException> retained = new ArrayList<>();
         for (int index = 0; index < 5; index++) {
-            client.captureException(new RuntimeException("duplicate checkout failure"));
+            RuntimeException failure = new RuntimeException("duplicate checkout failure");
+            retained.add(failure);
+            client.captureException(failure);
         }
         client.flush().join();
+        java.lang.ref.Reference.reachabilityFence(retained);
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).hasSize(4);
@@ -816,8 +820,11 @@ class DebugBundleApiTest {
                 clock::nowMillis
         );
 
-        for (int index = 0; index < 11; index++) { captureRecursiveFailure(client); }
+        List<RuntimeException> retained = new ArrayList<>();
+        for (int index = 0; index < 11; index++) { retained.add(captureRecursiveFailure(client)); }
         client.flush().join();
+        java.lang.ref.Reference.reachabilityFence(retained);
+        retained.clear();
 
         assertThat(transport.calls()).hasSize(1);
         assertThat(transport.calls().get(0).events())
@@ -825,8 +832,10 @@ class DebugBundleApiTest {
                 .containsExactly("backend_exception", "backend_exception", "backend_exception", "error_suppressed");
 
         clock.advanceMillis(30_000L);
-        for (int index = 0; index < 2; index++) { captureRecursiveFailure(client); }
+        for (int index = 0; index < 2; index++) { retained.add(captureRecursiveFailure(client)); }
         client.flush().join();
+        java.lang.ref.Reference.reachabilityFence(retained);
+        retained.clear();
 
         assertThat(transport.calls()).hasSize(2);
         List<Map<String, Object>> checkpointEvents = transport.calls().get(1).events();
@@ -838,8 +847,9 @@ class DebugBundleApiTest {
         assertThat(checkpointPayload).containsEntry("suppressed_count", 2);
 
         clock.advanceMillis(61_000L);
-        captureRecursiveFailure(client);
+        retained.add(captureRecursiveFailure(client));
         client.flush().join();
+        java.lang.ref.Reference.reachabilityFence(retained);
 
         assertThat(transport.calls()).hasSize(3);
         List<Map<String, Object>> recoveredEvents = transport.calls().get(2).events();
@@ -907,8 +917,10 @@ class DebugBundleApiTest {
                 }
         }
 
-    private void captureRecursiveFailure(DefaultDebugBundleClient client) {
-        client.captureException(new RuntimeException("recursive failure"));
+    private RuntimeException captureRecursiveFailure(DefaultDebugBundleClient client) {
+        RuntimeException failure = new RuntimeException("recursive failure");
+        client.captureException(failure);
+        return failure;
     }
 
     @SuppressWarnings("unchecked")

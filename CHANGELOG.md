@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-25
+
+### Breaking changes
+
+- Filter ineligible log records before event construction, redaction, and `beforeSend`; run admitted `beforeSend` callbacks on the background delivery worker after sampling and suppression. See [Java 3.0 migration](MIGRATION-3.0.md) for changed hook timing and caller-thread assumptions.
+- Move batch-full HTTP and local file delivery off capture threads into a bounded, priority-aware worker. Exceptions, ERROR logs, and incident-eligible failed requests can displace queued warnings. An all-error burst is rejected without a queue scan or exception rendering once capacity is exhausted. Queue pressure can discard events and emits a bounded aggregate when transport permits.
+- Scan sensitive text assignments in one pass on accepted events and keep evicting lower-priority queued events until an admitted event fits both queue limits; the byte cap also holds when one higher-priority event is larger than one displaced warning.
+
+### Safety
+
+- Snapshot exception messages, original stacks and causes through bounded weak handles on the existing delivery worker. Capture no longer runs blocking exception getters or waits for an application-held Throwable monitor. Collected inputs produce an explicit safe unavailable-details fallback; shutdown never waits for an accessor.
+- Charge protected exception snapshots and valid hook replacements incrementally before another callback runs. Preserve finalized payloads and custom event IDs across retries, and drop over-budget replacements without restoring original content.
+
+### Added
+
+- Optional request-scoped INFO breadcrumbs attached to captured exceptions, structured JUL `Throwable` capture, bounded redirected Java stack assembly, and explicit global-hook shutdown.
+- The Maven Central release workflow now requires the installed WildFly Jakarta and Javax stack-assembly smoke before publication.
+
 ## [2.0.0] - 2026-09-21
 
 ### Security

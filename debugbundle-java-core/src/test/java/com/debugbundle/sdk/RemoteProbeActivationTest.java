@@ -48,20 +48,23 @@ class RemoteProbeActivationTest {
                 transport,
                 System::currentTimeMillis
         );
+        client.initialConfigReady().join();
 
         client.probe("checkout.tax", Map.of("secret", "top-secret", "total", 42));
         client.probe("checkout.list", List.of("first", "second"));
         client.probe("checkout.scalar", 42);
         client.probe("checkout.null", (Object) null);
         client.captureException(new RuntimeException("checkout failed"));
-        client.flush();
+        client.flush().join();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).extracting(event -> event.get("event_type"))
-                .containsExactly("probe_event", "probe_event", "probe_event", "probe_event", "backend_exception");
+                .containsExactly("backend_exception", "probe_event", "probe_event", "probe_event", "probe_event");
+        List<Map<String, Object>> probeEvents = events.stream()
+                .filter(event -> "probe_event".equals(event.get("event_type"))).toList();
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> probePayload = (Map<String, Object>) events.get(0).get("payload");
+        Map<String, Object> probePayload = (Map<String, Object>) probeEvents.get(0).get("payload");
         assertThat(probePayload).containsEntry("label", "checkout.tax");
         assertThat(probePayload).containsEntry("activation_id", "11111111-1111-4111-8111-111111111111");
         assertThat(probePayload).containsEntry("probe_label_pattern", "checkout.*");
@@ -71,18 +74,18 @@ class RemoteProbeActivationTest {
         assertThat(probeData).containsEntry("secret", "[REDACTED]");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> listPayload = (Map<String, Object>) events.get(1).get("payload");
+        Map<String, Object> listPayload = (Map<String, Object>) probeEvents.get(1).get("payload");
         assertThat((Map<String, Object>) listPayload.get("data"))
                 .containsEntry("value", List.of("first", "second"));
         @SuppressWarnings("unchecked")
-        Map<String, Object> scalarPayload = (Map<String, Object>) events.get(2).get("payload");
+        Map<String, Object> scalarPayload = (Map<String, Object>) probeEvents.get(2).get("payload");
         assertThat((Map<String, Object>) scalarPayload.get("data")).containsEntry("value", 42);
         @SuppressWarnings("unchecked")
-        Map<String, Object> nullPayload = (Map<String, Object>) events.get(3).get("payload");
+        Map<String, Object> nullPayload = (Map<String, Object>) probeEvents.get(3).get("payload");
         assertThat((Map<String, Object>) nullPayload.get("data")).containsEntry("value", null);
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> exceptionPayload = (Map<String, Object>) events.get(4).get("payload");
+        Map<String, Object> exceptionPayload = (Map<String, Object>) events.get(0).get("payload");
         @SuppressWarnings("unchecked")
         Map<String, Object> flushedProbeData = (Map<String, Object>) exceptionPayload.get("probe_data");
         @SuppressWarnings("unchecked")
@@ -127,13 +130,14 @@ class RemoteProbeActivationTest {
                 dormantTransport,
                 System::currentTimeMillis
         );
+        dormantClient.initialConfigReady().join();
 
         int[] dormantCalls = {0};
         dormantClient.probe("db.query-plan", () -> {
             dormantCalls[0]++;
             return Map.of("plan", "full scan");
         }, ProbeOptions.heavyOption());
-        dormantClient.flush();
+        dormantClient.flush().join();
 
         assertThat(dormantCalls[0]).isZero();
         assertThat(dormantTransport.calls()).isEmpty();
@@ -177,13 +181,14 @@ class RemoteProbeActivationTest {
                 activeTransport,
                 System::currentTimeMillis
         );
+        activeClient.initialConfigReady().join();
 
         int[] activeCalls = {0};
         activeClient.probe("db.query-plan", () -> {
             activeCalls[0]++;
             return Map.of("plan", "full scan");
         }, ProbeOptions.heavyOption());
-        activeClient.flush();
+        activeClient.flush().join();
 
         assertThat(activeCalls[0]).isEqualTo(1);
         List<Map<String, Object>> events = activeTransport.calls().get(0).events();
@@ -234,9 +239,10 @@ class RemoteProbeActivationTest {
                 transport,
                 clock::nowMillis
         );
+        client.initialConfigReady().join();
 
         client.probe("checkout.tax", Map.of("total", 42));
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
         assertThat(transport.calls().get(0).events()).hasSize(1);
@@ -244,7 +250,7 @@ class RemoteProbeActivationTest {
 
         clock.advanceMillis(61_000L);
         client.probe("checkout.tax", Map.of("total", 43));
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
     }

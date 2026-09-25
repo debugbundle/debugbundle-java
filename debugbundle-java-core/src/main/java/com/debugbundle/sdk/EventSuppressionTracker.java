@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 final class EventSuppressionTracker {
+    private static final int MAX_TRACKED_KEYS = 2_048;
     private static final long DUPLICATE_WINDOW_MS = 30_000L;
     private static final long LOOP_WINDOW_MS = 2_000L;
     private static final int LOOP_THRESHOLD = 10;
@@ -20,7 +21,10 @@ final class EventSuppressionTracker {
 
     private final Map<String, SuppressionState> states = new LinkedHashMap<>();
 
-    boolean shouldCapture(String key, long nowMillis) {
+    synchronized boolean shouldCapture(String key, long nowMillis) {
+        if (!states.containsKey(key) && states.size() >= MAX_TRACKED_KEYS) {
+            states.remove(states.keySet().iterator().next());
+        }
         SuppressionState state = states.computeIfAbsent(key, ignored -> new SuppressionState(nowMillis));
 
         if (state.suppressionMode && nowMillis - state.lastSeenAtMillis >= LOOP_RESET_AFTER_MS) {
@@ -58,7 +62,7 @@ final class EventSuppressionTracker {
         return false;
     }
 
-    List<SuppressionAggregate> drainAggregates(long nowMillis) {
+    synchronized List<SuppressionAggregate> drainAggregates(long nowMillis) {
         List<SuppressionAggregate> aggregates = new ArrayList<>();
 
         for (Map.Entry<String, SuppressionState> entry : states.entrySet()) {

@@ -41,6 +41,7 @@ class RemoteConfigPolicyTest {
                 transport,
                 System::currentTimeMillis
         );
+        client.initialConfigReady().join();
 
         client.captureLog("suppressed warning", LogLevel.WARNING, Map.of());
         client.captureRequest(
@@ -48,7 +49,7 @@ class RemoteConfigPolicyTest {
                 Map.of("status_code", 200, "duration_ms", 12),
                 Map.of()
         );
-        client.flush();
+        client.flush().join();
 
         assertThat(fetcher.requests()).hasSize(1);
         List<Map<String, Object>> events = transport.calls().get(0).events();
@@ -71,6 +72,7 @@ class RemoteConfigPolicyTest {
                 transport,
                 System::currentTimeMillis
         );
+        client.initialConfigReady().join();
 
         client.captureLog("warning suppressed by minimal fallback", LogLevel.WARNING, Map.of());
         client.captureLog("error survives minimal fallback", LogLevel.ERROR, Map.of());
@@ -84,7 +86,7 @@ class RemoteConfigPolicyTest {
                 Map.of("status_code", 503, "duration_ms", 9),
                 Map.of()
         );
-        client.flush();
+        client.flush().join();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).hasSize(2);
@@ -125,10 +127,11 @@ class RemoteConfigPolicyTest {
                 transport,
                 System::currentTimeMillis
         );
+        client.initialConfigReady().join();
 
         client.captureLog("balanced warning log", LogLevel.WARNING, Map.of());
         client.refreshRemoteConfigNow();
-        client.flush();
+        client.flush().join();
 
         assertThat(fetcher.requests()).hasSize(2);
         assertThat(fetcher.requests().get(1).ifNoneMatch()).isEqualTo("\"cfg-v1\"");
@@ -176,6 +179,7 @@ class RemoteConfigPolicyTest {
                 transport,
                 System::currentTimeMillis
         );
+        client.initialConfigReady().join();
 
         client.captureRequest(
                 Map.of("method", "POST", "path", "/checkout/cart", "headers", Map.of(), "query", Map.of()),
@@ -187,7 +191,7 @@ class RemoteConfigPolicyTest {
                 Map.of("status_code", 404, "duration_ms", 12),
                 Map.of()
         );
-        client.flush();
+        client.flush().join();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).hasSize(1);

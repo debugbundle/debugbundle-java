@@ -35,6 +35,7 @@ public final class TelemetryPrivacy {
     private static final Pattern CARD = Pattern.compile("(?<![A-Za-z0-9_-])(?:[0-9][ -]?){12,18}[0-9](?![A-Za-z0-9_-])");
     private static final Pattern ENCODED_LABEL = Pattern.compile("(?:password|token|secret|authorization|cookie)%3[ad]", Pattern.CASE_INSENSITIVE);
     private static final Pattern MALFORMED_LABEL = Pattern.compile("(?:password|token|secret|authorization|cookie)[\"']?\\s*[:=]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DEFAULT_ASSIGNMENT = assignmentPattern(FIELDS);
 
     private TelemetryPrivacy() {
     }
@@ -77,14 +78,25 @@ public final class TelemetryPrivacy {
         private int bytes;
         private final Set<Object> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         private final Set<String> keys;
-        private final Set<String> additional;
+        private final Pattern assignment;
 
         private Work(Set<String> additional) {
-            this.additional = additional;
+            this.assignment = additional.isEmpty() ? DEFAULT_ASSIGNMENT : assignmentPattern(assignmentFields(additional));
             this.keys = new java.util.HashSet<>();
             for (String field : FIELDS) keys.add(canonical(field));
             for (String field : additional) keys.add(canonical(field));
         }
+    }
+
+    private static List<String> assignmentFields(Set<String> additional) {
+        List<String> fields = new ArrayList<>(FIELDS);
+        fields.addAll(additional.stream().sorted().toList());
+        return fields;
+    }
+
+    private static Pattern assignmentPattern(List<String> fields) {
+        String labels = fields.stream().map(Pattern::quote).collect(java.util.stream.Collectors.joining("|"));
+        return Pattern.compile("\\b(" + labels + ")\\b([\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s&,;]+)", Pattern.CASE_INSENSITIVE);
     }
 
     private static String canonical(String key) {
@@ -174,8 +186,7 @@ public final class TelemetryPrivacy {
         output = HEADER.matcher(output).replaceAll("$1: [REDACTED]");
         output = BEARER.matcher(output).replaceAll("$1 [REDACTED]");
         output = TOKEN.matcher(output).replaceAll(REDACTED);
-        for (String field : FIELDS) output = replaceAssignment(output, field);
-        for (String field : work.additional) output = replaceAssignment(output, field);
+        output = work.assignment.matcher(output).replaceAll("$1$2[REDACTED]");
         Matcher cards = CARD.matcher(output);
         StringBuffer cardOutput = new StringBuffer();
         while (cards.find()) cards.appendReplacement(cardOutput, validCard(cards.group()) ? REDACTED : Matcher.quoteReplacement(cards.group()));
@@ -190,11 +201,6 @@ public final class TelemetryPrivacy {
         }
         urls.appendTail(urlOutput);
         return urlOutput.toString();
-    }
-
-    private static String replaceAssignment(String text, String field) {
-        Pattern pattern = Pattern.compile("\\b(" + Pattern.quote(field) + ")\\b([\"']?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s&,;]+)", Pattern.CASE_INSENSITIVE);
-        return pattern.matcher(text).replaceAll("$1$2[REDACTED]");
     }
 
     private static boolean validCard(String value) {

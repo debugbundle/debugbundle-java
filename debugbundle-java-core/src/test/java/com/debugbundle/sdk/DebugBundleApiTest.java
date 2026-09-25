@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -29,6 +31,55 @@ class DebugBundleApiTest {
 
         assertThat(client.status()).isEqualTo(DebugBundleStatus.HEALTHY);
         assertThat(DebugBundle.status()).isEqualTo(DebugBundleStatus.HEALTHY);
+    }
+
+    @Test
+    void shutdownDetachesGlobalJulHandlerBeforeRedeploy() {
+        DebugBundle.init(DebugBundleConfig.builder().projectToken("dbundle_proj_test").environment("local").build());
+        DebugBundle.captureJavaUtilLogging();
+        assertThat(java.util.Arrays.stream(Logger.getLogger("").getHandlers())
+                .filter(handler -> handler instanceof DebugBundleJulHandler).count()).isEqualTo(1);
+
+        DebugBundle.shutdown();
+        assertThat(java.util.Arrays.stream(Logger.getLogger("").getHandlers())
+                .filter(handler -> handler instanceof DebugBundleJulHandler).count()).isZero();
+
+        DebugBundle.captureJavaUtilLogging();
+        assertThat(java.util.Arrays.stream(Logger.getLogger("").getHandlers())
+                .filter(handler -> handler instanceof DebugBundleJulHandler).count()).isEqualTo(1);
+        DebugBundle.shutdown();
+
+        Logger redirectedStderr = Logger.getLogger("debugbundle.smoke.stderr");
+        DebugBundle.captureJavaUtilLogging(redirectedStderr);
+        assertThat(java.util.Arrays.stream(redirectedStderr.getHandlers())
+                .filter(handler -> handler instanceof DebugBundleJulHandler).count()).isEqualTo(1);
+        DebugBundle.shutdown();
+        assertThat(java.util.Arrays.stream(redirectedStderr.getHandlers())
+                .filter(handler -> handler instanceof DebugBundleJulHandler).count()).isZero();
+    }
+
+    @Test
+    void shutdownDrainsRedirectedStackBeforeClosingItsClient(@TempDir Path eventsDir) throws Exception {
+        Logger redirectedStderr = Logger.getLogger("debugbundle.shutdown.stderr");
+        redirectedStderr.setUseParentHandlers(false);
+        DebugBundle.init(DebugBundleConfig.builder().projectToken("dbundle_proj_test")
+                .environment("local").localEventsDir(eventsDir.toString()).batchSize(25).build());
+        DebugBundle.captureJavaUtilLogging(redirectedStderr);
+        redirectedStderr.log(Level.SEVERE, "java.lang.IllegalStateException: shutdown trace");
+        redirectedStderr.log(Level.SEVERE, "\tat example.Server.stop(Server.java:42)");
+
+        DebugBundle.shutdown();
+
+        boolean persisted = false;
+        long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+        while (System.nanoTime() < deadline) {
+            try (var files = Files.list(eventsDir)) {
+                persisted = files.anyMatch(Files::isRegularFile);
+            }
+            if (persisted) break;
+            Thread.sleep(10);
+        }
+        assertThat(persisted).isTrue();
     }
 
     @Test
@@ -78,6 +129,7 @@ class DebugBundleApiTest {
 
         client.captureMessage("first", LogLevel.ERROR, Map.of());
         client.captureMessage("second", LogLevel.ERROR, Map.of());
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
         assertThat(transport.calls().get(0).events()).hasSize(2);
@@ -105,7 +157,7 @@ class DebugBundleApiTest {
         );
 
         client.captureMessage("original", LogLevel.ERROR, Map.of("password", "secret"));
-        client.flush();
+        client.flush().join();
 
         assertThat(observedPasswords).containsExactly("[REDACTED]");
         @SuppressWarnings("unchecked")
@@ -133,7 +185,7 @@ class DebugBundleApiTest {
         );
         client.setContext("user_password", "SYNTHETIC_CONTEXT_SECRET");
         client.captureMessage("Authorization: Bearer SYNTHETIC_CAPTURE_SECRET", LogLevel.ERROR, Map.of("safe", "ok"));
-        client.flush();
+        client.flush().join();
 
         assertThat(hookInputs).hasSize(1);
         assertThat(hookInputs.get(0)).doesNotContain("SYNTHETIC_");
@@ -165,7 +217,7 @@ class DebugBundleApiTest {
                 System::currentTimeMillis
         );
         droppingClient.captureMessage("drop", LogLevel.ERROR, Map.of());
-        droppingClient.flush();
+        droppingClient.flush().join();
         assertThat(calls).hasValue(1);
         assertThat(transport.calls()).isEmpty();
 
@@ -178,7 +230,7 @@ class DebugBundleApiTest {
                 System::currentTimeMillis
         );
         invalidClient.captureMessage("preserve invalid", LogLevel.ERROR, Map.of());
-        invalidClient.flush();
+        invalidClient.flush().join();
 
         DefaultDebugBundleClient failingClient = new DefaultDebugBundleClient(
                 DebugBundleConfig.builder()
@@ -191,7 +243,7 @@ class DebugBundleApiTest {
                 System::currentTimeMillis
         );
         failingClient.captureMessage("preserve failure", LogLevel.ERROR, Map.of());
-        failingClient.flush();
+        failingClient.flush().join();
 
         assertThat(transport.calls()).hasSize(2);
         assertThat(message(transport.calls().get(0).events().get(0))).isEqualTo("preserve invalid");
@@ -211,8 +263,8 @@ class DebugBundleApiTest {
                 System::currentTimeMillis
         );
         sampledClient.captureMessage("sampled out", LogLevel.ERROR, Map.of());
-        sampledClient.flush();
-        assertThat(sampledCalls).hasValue(1);
+        sampledClient.flush().join();
+        assertThat(sampledCalls).hasValue(0);
         assertThat(transport.calls()).hasSize(2);
     }
 
@@ -242,7 +294,7 @@ class DebugBundleApiTest {
         client.endRequest(scope);
 
         decorated.run();
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
 
@@ -272,9 +324,9 @@ class DebugBundleApiTest {
         );
 
         client.captureException(new RuntimeException("database unavailable"));
-        client.flush();
+        client.flush().join();
         clock.advanceMillis(1_001L);
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(2);
         assertThat(transport.calls().get(1).events().get(0).get("payload"))
@@ -300,13 +352,13 @@ class DebugBundleApiTest {
         );
 
         client.captureMessage("retry me", LogLevel.ERROR, Map.of());
-        client.flush();
-        client.flush();
+        client.flush().join();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
 
         clock.advanceMillis(1_001L);
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(2);
     }
@@ -336,12 +388,12 @@ class DebugBundleApiTest {
         client.captureMessage("accepted", LogLevel.ERROR, Map.of());
         client.captureMessage("retry", LogLevel.ERROR, Map.of());
 
-        client.flush();
+        client.flush().join();
         assertThat(client.status()).isEqualTo(DebugBundleStatus.DEGRADED);
         assertThat(client.lastEventAt()).isPresent();
 
         clock.advanceMillis(1_001L);
-        client.flush();
+        client.flush().join();
         assertThat(transport.calls().get(1).events()).hasSize(1);
         assertThat(transport.calls().get(1).events().get(0).get("payload"))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
@@ -371,8 +423,8 @@ class DebugBundleApiTest {
         );
         client.captureMessage("terminal", LogLevel.ERROR, Map.of());
 
-        client.flush();
-        client.flush();
+        client.flush().join();
+        client.flush().join();
 
         assertThat(client.status()).isEqualTo(DebugBundleStatus.DISCONNECTED);
         assertThat(client.lastEventAt()).isEmpty();
@@ -398,12 +450,12 @@ class DebugBundleApiTest {
         client.captureMessage("first", LogLevel.ERROR, Map.of());
         client.captureMessage("second", LogLevel.ERROR, Map.of());
 
-        client.flush();
+        client.flush().join();
         assertThat(client.status()).isEqualTo(DebugBundleStatus.DEGRADED);
         assertThat(client.lastEventAt()).isEmpty();
 
         clock.advanceMillis(1_001L);
-        client.flush();
+        client.flush().join();
         assertThat(transport.calls().get(1).events()).hasSize(2);
     }
 
@@ -425,9 +477,9 @@ class DebugBundleApiTest {
         );
 
         client.captureMessage("retry me", LogLevel.ERROR, Map.of());
-        client.flush();
+        client.flush().join();
         clock.advanceMillis(300_001L);
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(2);
     }
@@ -451,7 +503,7 @@ class DebugBundleApiTest {
             throw new IllegalStateException("supplier failed");
         })).doesNotThrowAnyException();
         assertThatCode(() -> client.captureException(new RuntimeException("boom"))).doesNotThrowAnyException();
-        assertThatCode(client::flush).doesNotThrowAnyException();
+        assertThatCode(() -> client.flush().join()).doesNotThrowAnyException();
         assertThat(client.status()).isEqualTo(DebugBundleStatus.DEGRADED);
     }
 
@@ -487,7 +539,7 @@ class DebugBundleApiTest {
 
         client.captureMessage("drop me", LogLevel.ERROR, Map.of());
         client.captureException(new RuntimeException("drop me too"));
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).isEmpty();
     }
@@ -536,7 +588,7 @@ class DebugBundleApiTest {
                 ),
                 "response", Map.of("status_code", 401)
         ));
-        client.flush();
+        client.flush().join();
 
         Map<String, Object> event = transport.calls().get(0).events().get(0);
         @SuppressWarnings("unchecked")
@@ -575,7 +627,7 @@ class DebugBundleApiTest {
         cyclic.put("self", cyclic);
 
         client.captureLog("redaction check", LogLevel.ERROR, Map.of("sensitive", cyclic));
-        client.flush();
+        client.flush().join();
 
         Map<String, Object> event = transport.calls().get(0).events().get(0);
         @SuppressWarnings("unchecked")
@@ -613,7 +665,7 @@ class DebugBundleApiTest {
                 "long_string", "a".repeat(9_000),
                 "large_list", largeList
         ));
-        client.flush();
+        client.flush().join();
 
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = (Map<String, Object>) transport.calls().get(0).events().get(0).get("payload");
@@ -643,7 +695,7 @@ class DebugBundleApiTest {
             return Map.of("plan", "full scan");
         }, ProbeOptions.heavyOption());
         client.captureException(new RuntimeException("checkout failed"));
-        client.flush();
+        client.flush().join();
 
         assertThat(invocationCount[0]).isZero();
 
@@ -684,7 +736,7 @@ class DebugBundleApiTest {
                 "request", Map.of("method", "POST", "path", "/checkout", "headers", Map.of("authorization", "secret"), "query", Map.of()),
                 "response", Map.of("status_code", 500)
         ));
-        client.flush();
+        client.flush().join();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).hasSize(3);
@@ -698,12 +750,16 @@ class DebugBundleApiTest {
         assertThat(service).containsEntry("environment", "production");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> logPayload = (Map<String, Object>) events.get(0).get("payload");
+        Map<String, Object> logPayload = (Map<String, Object>) events.stream()
+                .filter(event -> "log_event".equals(event.get("event_type")))
+                .findFirst().orElseThrow().get("payload");
         assertThat(logPayload).containsEntry("message", "error raised");
         assertThat(logPayload).containsEntry("level", "error");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> requestPayload = (Map<String, Object>) events.get(1).get("payload");
+        Map<String, Object> requestPayload = (Map<String, Object>) events.stream()
+                .filter(event -> "request_event".equals(event.get("event_type")))
+                .findFirst().orElseThrow().get("payload");
         assertThat(requestPayload).containsEntry("method", "GET");
         assertThat(requestPayload).containsEntry("path", "/orders");
         assertThat(requestPayload).containsEntry("response_status", 503);
@@ -729,7 +785,7 @@ class DebugBundleApiTest {
         for (int index = 0; index < 5; index++) {
             client.captureException(new RuntimeException("duplicate checkout failure"));
         }
-        client.flush();
+        client.flush().join();
 
         List<Map<String, Object>> events = transport.calls().get(0).events();
         assertThat(events).hasSize(4);
@@ -761,7 +817,7 @@ class DebugBundleApiTest {
         );
 
         for (int index = 0; index < 11; index++) { captureRecursiveFailure(client); }
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(1);
         assertThat(transport.calls().get(0).events())
@@ -770,7 +826,7 @@ class DebugBundleApiTest {
 
         clock.advanceMillis(30_000L);
         for (int index = 0; index < 2; index++) { captureRecursiveFailure(client); }
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(2);
         List<Map<String, Object>> checkpointEvents = transport.calls().get(1).events();
@@ -783,7 +839,7 @@ class DebugBundleApiTest {
 
         clock.advanceMillis(61_000L);
         captureRecursiveFailure(client);
-        client.flush();
+        client.flush().join();
 
         assertThat(transport.calls()).hasSize(3);
         List<Map<String, Object>> recoveredEvents = transport.calls().get(2).events();
@@ -807,7 +863,7 @@ class DebugBundleApiTest {
         );
 
         client.captureMessage("local event", LogLevel.WARNING, Map.of("tenant", "acme"));
-        client.flush();
+        client.flush().join();
 
         try (var files = Files.list(tempDir)) {
             List<Path> writtenFiles = files.toList();
@@ -841,7 +897,7 @@ class DebugBundleApiTest {
                 );
 
                 client.captureMessage("local-only event", LogLevel.WARNING, Map.of("tenant", "acme"));
-                client.flush();
+                client.flush().join();
 
                 assertThat(client.status()).isEqualTo(DebugBundleStatus.HEALTHY);
                 try (var files = Files.list(tempDir)) {

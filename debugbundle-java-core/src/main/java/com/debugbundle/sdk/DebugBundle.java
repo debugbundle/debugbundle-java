@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -14,6 +15,10 @@ public final class DebugBundle {
             new AtomicReference<>(new DefaultDebugBundleClient(DebugBundleConfig.builder().enabled(false).build()));
     private static final AtomicBoolean JUL_INSTALLED = new AtomicBoolean(false);
     private static final AtomicBoolean UNCAUGHT_HANDLER_INSTALLED = new AtomicBoolean(false);
+    private static final AtomicReference<DebugBundleJulHandler> JUL_HANDLER = new AtomicReference<>();
+    private static final AtomicReference<Logger> JUL_LOGGER = new AtomicReference<>();
+    private static final AtomicReference<Thread.UncaughtExceptionHandler> PREVIOUS_UNCAUGHT = new AtomicReference<>();
+    private static final AtomicReference<Thread.UncaughtExceptionHandler> INSTALLED_UNCAUGHT = new AtomicReference<>();
 
     private DebugBundle() {
     }
@@ -123,26 +128,71 @@ public final class DebugBundle {
         }
 
         Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+        PREVIOUS_UNCAUGHT.set(previous);
+        Thread.UncaughtExceptionHandler installed = (thread, throwable) -> {
             captureException(throwable, Map.of("thread", thread == null ? "unknown" : thread.getName()));
             if (previous != null) {
                 previous.uncaughtException(thread, throwable);
             }
-        });
+        };
+        INSTALLED_UNCAUGHT.set(installed);
+        Thread.setDefaultUncaughtExceptionHandler(installed);
     }
 
     public static void captureJavaUtilLogging() {
+        swallow(() -> captureJavaUtilLogging(Logger.getLogger("")));
+    }
+
+    /** Attach after an app server has initialized its LogManager; an explicit logger may be needed. */
+    public static void captureJavaUtilLogging(Logger logger) {
+        if (logger == null) return;
         if (!JUL_INSTALLED.compareAndSet(false, true)) {
             return;
         }
+        DebugBundleJulHandler handler = new DebugBundleJulHandler(DebugBundle::client);
+        try {
+            logger.addHandler(handler);
+            JUL_LOGGER.set(logger);
+            JUL_HANDLER.set(handler);
+        } catch (Throwable ignored) {
+            swallow(handler::close);
+            JUL_INSTALLED.set(false);
+        }
+    }
 
-        Logger.getLogger("").addHandler(new DebugBundleJulHandler(DebugBundle::client));
+    /** Detach global hooks on WAR undeploy or explicit application shutdown. */
+    public static void shutdown() {
+        DebugBundleJulHandler handler = JUL_HANDLER.getAndSet(null);
+        Logger logger = JUL_LOGGER.getAndSet(null);
+        if (handler != null) {
+            if (logger != null) swallow(() -> logger.removeHandler(handler));
+        }
+        JUL_INSTALLED.set(false);
+        Thread.UncaughtExceptionHandler installed = INSTALLED_UNCAUGHT.getAndSet(null);
+        if (installed != null && Thread.getDefaultUncaughtExceptionHandler() == installed) {
+            Thread.setDefaultUncaughtExceptionHandler(PREVIOUS_UNCAUGHT.getAndSet(null));
+        }
+        UNCAUGHT_HANDLER_INSTALLED.set(false);
+        DebugBundleClient previous = CLIENT.getAndSet(new DefaultDebugBundleClient(
+                DebugBundleConfig.builder().enabled(false).build()
+        ));
+        CompletableFuture<Void> drained = handler == null
+                ? CompletableFuture.completedFuture(null) : handler.drainPendingStacks();
+        drained.whenComplete((ignored, failure) -> {
+            if (handler != null) swallow(handler::close);
+            try {
+                previous.flush().orTimeout(2L, TimeUnit.SECONDS)
+                        .whenComplete((flushed, flushFailure) -> swallow(previous::close));
+            } catch (Throwable ignoredFailure) {
+                swallow(previous::close);
+            }
+        });
     }
 
     private static void swallow(Runnable runnable) {
         try {
             runnable.run();
-        } catch (RuntimeException ignored) {
+        } catch (Throwable ignored) {
         }
     }
 }

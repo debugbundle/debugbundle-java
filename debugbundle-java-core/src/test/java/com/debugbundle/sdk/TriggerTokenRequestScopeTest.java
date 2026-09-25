@@ -48,6 +48,7 @@ class TriggerTokenRequestScopeTest {
                 transport,
                 clock::nowMillis
         );
+        client.initialConfigReady().join();
 
         String expiredQueryToken = createTriggerToken(triggerTokenKey, """
                 {"activation_id":"11111111-1111-4111-8111-111111111111","label_pattern":"checkout.*","service":"checkout-api","environment":"production","trigger_expires_at":"2026-03-14T00:00:00Z"}
@@ -73,7 +74,7 @@ class TriggerTokenRequestScopeTest {
             return Map.of("total", 42);
         }, ProbeOptions.heavyOption());
         client.endRequest(scope);
-        client.flush();
+        client.flush().join();
 
         assertThat(invocations[0]).isEqualTo(1);
         assertThat(transport.calls()).hasSize(1);
@@ -105,7 +106,7 @@ class TriggerTokenRequestScopeTest {
             return Map.of("total", 43);
         }, ProbeOptions.heavyOption());
         client.endRequest(secondScope);
-        client.flush();
+        client.flush().join();
 
         assertThat(invocations[0]).isEqualTo(1);
         assertThat(transport.calls()).hasSize(1);

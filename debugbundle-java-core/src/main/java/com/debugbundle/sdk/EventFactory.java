@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "2.0.0";
+    private static final String SDK_VERSION = "3.0.0";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -34,12 +34,26 @@ final class EventFactory {
     }
 
     Map<String, Object> buildExceptionEvent(Throwable error, Map<String, Object> inputContext) {
+        return buildExceptionEvent(error, inputContext, List.of());
+    }
+
+    Map<String, Object> buildExceptionEvent(
+            Throwable error,
+            Map<String, Object> inputContext,
+            List<Map<String, Object>> breadcrumbs
+    ) {
+        return completeExceptionEvent(buildExceptionShell(error.getClass().getSimpleName(), inputContext, breadcrumbs), error);
+    }
+
+    Map<String, Object> buildExceptionShell(
+            String name, Map<String, Object> inputContext, List<Map<String, Object>> breadcrumbs
+    ) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("name", error.getClass().getSimpleName());
-        payload.put("message", error.getMessage());
+        payload.put("name", name.isEmpty() ? "Throwable" : name);
+        payload.put("message", "[exception details unavailable]");
         payload.put("handled", true);
-        payload.put("runtime", RuntimeFacts.capture());
-        payload.put("stack", buildStackTrace(error));
+        payload.put("runtime", Map.of("version", "unavailable", "thread_id", Thread.currentThread().getId()));
+        payload.put("stack", "[exception details unavailable: input no longer reachable]");
 
         Map<String, Object> request = extractMap(inputContext, "request");
         payload.put("request", redact(requestPayload(request)));
@@ -47,14 +61,58 @@ final class EventFactory {
         Map<String, Object> response = extractMap(inputContext, "response");
         payload.put("response", redact(responsePayload(response)));
 
-        if (config.probeFlushOnError()) {
-            Map<String, Object> probeData = flushProbeData();
-            if (!probeData.isEmpty()) {
-                payload.put("probe_data", probeData);
+        Map<String, Object> probeData = config.probeFlushOnError() ? flushProbeData() : Map.of();
+        if (!probeData.isEmpty() || !breadcrumbs.isEmpty()) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            if (probeData.get("items") instanceof List<?> bufferedProbes) {
+                for (Object item : bufferedProbes) {
+                    if (item instanceof Map<?, ?> probe) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> safeProbe = (Map<String, Object>) probe;
+                        items.add(safeProbe);
+                    }
+                }
             }
+            items.addAll(breadcrumbs);
+            payload.put("probe_data", Map.of("version", 1, "items", items));
         }
 
         return baseEvent("backend_exception", payload, extractCorrelation(inputContext), residualContext(inputContext));
+    }
+
+    Map<String, Object> completeExceptionEvent(Map<String, Object> shell, Throwable error) {
+        Map<String, Object> event = new LinkedHashMap<>(shell);
+        Map<String, Object> payload = new LinkedHashMap<>(extractMap(shell, "payload"));
+        Map<String, Object> runtime = RuntimeFacts.capture();
+        runtime.put("thread_id", extractMap(payload, "runtime").get("thread_id"));
+        payload.put("runtime", runtime);
+        if (error != null) {
+            payload.put("message", safeThrowableMessage(error));
+            payload.put("stack", buildStackTrace(error));
+        }
+        event.put("payload", payload);
+        return event;
+    }
+
+    Map<String, Object> buildReportedStackEvent(
+            String name,
+            String message,
+            String stack,
+            Map<String, Object> inputContext,
+            Instant occurredAt
+    ) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("name", name);
+        payload.put("message", message);
+        payload.put("stack", stack);
+        payload.put("handled", true);
+        payload.put("runtime", RuntimeFacts.capture());
+        Map<String, Object> request = extractMap(inputContext, "request");
+        payload.put("request", redact(requestPayload(request.isEmpty() ? inputContext : request)));
+        Map<String, Object> response = extractMap(inputContext, "response");
+        payload.put("response", redact(responsePayload(response.isEmpty() ? inputContext : response)));
+        return baseEvent("backend_exception", payload, extractCorrelation(inputContext),
+                residualContext(inputContext), occurredAt);
     }
 
     Map<String, Object> buildLogEvent(String message, LogLevel level, Map<String, Object> inputContext) {
@@ -114,15 +172,11 @@ final class EventFactory {
     }
 
     void bufferProbe(String label, Object data) {
+        if (config.maxProbeLabels() <= 0 || config.maxProbeEntriesPerLabel() <= 0) return;
         String safeLabel;
         try {
             safeLabel = (String) TelemetryPrivacy.protect(label, sensitiveFields);
         } catch (RuntimeException ignored) {
-            return;
-        }
-        List<Map<String, Object>> entries = probeBuffers.computeIfAbsent(safeLabel, ignored -> new ArrayList<>());
-        if (entries.isEmpty() && probeBuffers.size() > config.maxProbeLabels()) {
-            probeBuffers.remove(safeLabel);
             return;
         }
         Map<String, Object> entry = new LinkedHashMap<>();
@@ -130,9 +184,15 @@ final class EventFactory {
         entry.put("data", normalizeProbeData(data));
         entry.put("timestamp", isoTimestamp(now()));
         entry.put("activation_id", null);
-        entries.add(entry);
-        while (entries.size() > config.maxProbeEntriesPerLabel()) {
-            entries.remove(0);
+        synchronized (probeBuffers) {
+            if (!probeBuffers.containsKey(safeLabel) && probeBuffers.size() >= config.maxProbeLabels()) {
+                return;
+            }
+            List<Map<String, Object>> entries = probeBuffers.computeIfAbsent(safeLabel, ignored -> new ArrayList<>());
+            entries.add(entry);
+            while (entries.size() > config.maxProbeEntriesPerLabel()) {
+                entries.remove(0);
+            }
         }
     }
 
@@ -216,39 +276,62 @@ final class EventFactory {
     }
 
     private Map<String, Object> flushProbeData() {
-        if (probeBuffers.isEmpty()) {
-            return Map.of();
-        }
+        synchronized (probeBuffers) {
+            if (probeBuffers.isEmpty()) {
+                return Map.of();
+            }
 
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (List<Map<String, Object>> entries : probeBuffers.values()) {
-            items.addAll(entries);
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (List<Map<String, Object>> entries : probeBuffers.values()) {
+                items.addAll(entries);
+            }
+            probeBuffers.clear();
+            return Map.of("version", 1, "items", items);
         }
-        probeBuffers.clear();
-        return Map.of(
-                "version", 1,
-                "items", items
-        );
     }
 
     private String buildStackTrace(Throwable error) {
         StringBuilder builder = new StringBuilder();
-        builder.append(error.getClass().getName()).append(": ");
-        if (error.getMessage() != null) {
-            builder.append(error.getMessage());
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Throwable current = error;
+        int causes = 0;
+        while (current != null && causes < 8 && seen.add(current) && builder.length() < 32_768) {
+            if (causes > 0) builder.append("\nCaused by: ");
+            builder.append(current.getClass().getName()).append(": ").append(safeThrowableMessage(current));
+            StackTraceElement[] frames;
+            try {
+                frames = current.getStackTrace();
+            } catch (Throwable ignored) {
+                frames = new StackTraceElement[0];
+            }
+            if (frames == null) frames = new StackTraceElement[0];
+            for (int index = 0; index < Math.min(frames.length, 64) && builder.length() < 32_768; index++) {
+                StackTraceElement element = frames[index];
+                builder.append("\n at ")
+                        .append(element.getClassName()).append(".").append(element.getMethodName())
+                        .append("(").append(element.getFileName()).append(":")
+                        .append(element.getLineNumber()).append(")");
+            }
+            if (frames.length > 64) builder.append("\n ... ").append(frames.length - 64).append(" more");
+            try {
+                current = current.getCause();
+            } catch (Throwable ignored) {
+                break;
+            }
+            causes++;
         }
-        for (StackTraceElement element : error.getStackTrace()) {
-            builder.append("\n at ")
-                    .append(element.getClassName())
-                    .append(".")
-                    .append(element.getMethodName())
-                    .append("(")
-                    .append(element.getFileName())
-                    .append(":")
-                    .append(element.getLineNumber())
-                    .append(")");
+        return builder.substring(0, Math.min(builder.length(), 32_768));
+    }
+
+    private String safeThrowableMessage(Throwable error) {
+        try {
+            String message = error.getMessage();
+            if (message == null || message.isBlank()) return error.getClass().getSimpleName();
+            String safe = (String) TelemetryPrivacy.protect(message, sensitiveFields);
+            return safe.length() <= 4_096 ? safe : safe.substring(0, 4_096);
+        } catch (Throwable ignored) {
+            return error.getClass().getSimpleName();
         }
-        return builder.toString();
     }
 
     private Map<String, Object> requestPayload(Map<String, Object> request) {

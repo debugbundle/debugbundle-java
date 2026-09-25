@@ -207,6 +207,10 @@ jobs:
       - name: Run quality gates
         run: mvn -B -ntp clean verify
 
+      - name: Verify WildFly Jakarta and Javax exception assembly before publication
+        if: steps.published_state.outputs.state == 'none'
+        run: make smoke-wildfly JAVA_VERSION=21
+
       - name: Publish to Maven Central
         if: steps.published_state.outputs.state == 'none'
         run: mvn -B -ntp clean deploy -Prelease -Dgpg.keyname="${MAVEN_GPG_KEYNAME}"

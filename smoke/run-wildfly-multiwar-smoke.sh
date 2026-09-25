@@ -54,12 +54,27 @@ verify_lane() {
   port=$(docker port "$container" 8080/tcp | sed -n '1s/.*://p')
   curl -sS "http://127.0.0.1:$port$first_route" >/dev/null
   curl -sS "http://127.0.0.1:$port$second_route" >/dev/null
+  curl -fsS "http://127.0.0.1:$port${first_route%failure.jsp}stack.jsp" > "$TEMP_DIR/$lane-stack-response.txt"
 
   attempt=0
   while ! docker exec "$container" sh -lc 'test "$(find standalone/debugbundle-events -type f -name "*.events.json" 2>/dev/null | wc -l)" -ge 2'; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 30 ]; then
       echo "WildFly lane $lane did not persist both deployment events" >&2
+      docker logs "$container" >&2 || true
+      exit 1
+    fi
+    sleep 1
+  done
+
+  attempt=0
+  while ! docker exec "$container" sh -lc 'grep -Rqs "SyntheticSmokeException" standalone/debugbundle-events --include="*.events.json" 2>/dev/null'; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      echo "WildFly lane $lane did not persist the assembled synthetic stack" >&2
+      cat "$TEMP_DIR/$lane-stack-response.txt" >&2
+      docker exec "$container" sh -lc 'find standalone/debugbundle-events -type f -maxdepth 2 -name "*.events.json" -print | head -20' >&2 || true
+      docker exec "$container" sh -lc 'for file in standalone/debugbundle-events/*.events.json; do head -c 1200 "$file"; printf "\n"; done' >&2 || true
       docker logs "$container" >&2 || true
       exit 1
     fi
@@ -77,6 +92,11 @@ verify_lane() {
     find "$lane_output" -type f -maxdepth 2 -print -exec sed -n '1,120p' {} \; >&2
     exit 1
   fi
+  case "$lane" in
+    jakarta) agent_service=wildfly-stack-smoke ;;
+    javax) agent_service=wildfly-stack-smoke ;;
+  esac
+  python3 "$REPO_DIR/smoke/check-wildfly-stack.py" "$lane_output" "$agent_service"
 
   docker rm -f "$container" >/dev/null
   RUNNING_CONTAINERS=$(printf '%s' "$RUNNING_CONTAINERS" | sed "s/ $container//")

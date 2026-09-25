@@ -29,7 +29,7 @@ final class RequestCapturePolicy {
         };
     }
 
-    private static boolean isImmediateRequestIncidentStatus(int statusCode, String requestPath, String httpMethod, CapturePolicy policy) {
+    static boolean isImmediateRequestIncidentStatus(int statusCode, String requestPath, String httpMethod, CapturePolicy policy) {
         if (statusCode >= 500) {
             return true;
         }

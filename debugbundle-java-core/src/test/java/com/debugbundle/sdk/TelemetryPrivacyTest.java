@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class TelemetryPrivacyTest {
@@ -43,5 +44,23 @@ class TelemetryPrivacyTest {
         assertThat(safe).isEqualTo(Map.of("password", "[REDACTED]", "tenant_pin_code", "[REDACTED]", "status", 503));
         assertThat(TelemetryPrivacy.protect(safe, Set.of("tenant_pin_code"))).isEqualTo(safe);
         assertThat(input.get("password")).isEqualTo("SYNTHETIC_SECRET");
+    }
+
+    @Test
+    void redactsMultipleMandatoryAndCustomAssignmentsInOneText() {
+        String input = "password=alpha token:bravo api_key=charlie tenant_pin_code='delta'";
+        assertThat(TelemetryPrivacy.protect(input, Set.of("tenant_pin_code")))
+                .isEqualTo("password=[REDACTED] token:[REDACTED] api_key=[REDACTED] tenant_pin_code=[REDACTED]");
+    }
+
+    @Test
+    void acceptedTextScanningHasABoundedBurstCost() {
+        Map<String, Object> event = Map.of("message", "chart render failed while loading ordinary telemetry context");
+        for (int index = 0; index < 100; index++) TelemetryPrivacy.protect(event, Set.of());
+        long started = System.nanoTime();
+        for (int index = 0; index < 10_000; index++) TelemetryPrivacy.protect(event, Set.of());
+        long elapsed = System.nanoTime() - started;
+        assertThat(elapsed).as("10,000 accepted text scans took %d ms", TimeUnit.NANOSECONDS.toMillis(elapsed))
+                .isLessThan(TimeUnit.SECONDS.toNanos(3));
     }
 }

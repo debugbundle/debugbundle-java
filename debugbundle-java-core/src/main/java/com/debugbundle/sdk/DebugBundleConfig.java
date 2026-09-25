@@ -19,6 +19,7 @@ public final class DebugBundleConfig {
     private final int maxProbeEntriesPerLabel;
     private final boolean probeFlushOnError;
     private final LogLevel logLevel;
+    private final boolean infoBreadcrumbs;
     private final Duration requestTimeout;
     private final String projectMode;
     private final String localEventsDir;
@@ -40,6 +41,7 @@ public final class DebugBundleConfig {
         this.maxProbeEntriesPerLabel = builder.maxProbeEntriesPerLabel;
         this.probeFlushOnError = builder.probeFlushOnError;
         this.logLevel = builder.logLevel;
+        this.infoBreadcrumbs = builder.infoBreadcrumbs;
         this.requestTimeout = builder.requestTimeout;
         this.projectMode = builder.projectMode;
         this.localEventsDir = builder.localEventsDir;
@@ -107,6 +109,10 @@ public final class DebugBundleConfig {
         return logLevel;
     }
 
+    public boolean infoBreadcrumbs() {
+        return infoBreadcrumbs;
+    }
+
     public Duration requestTimeout() {
         return requestTimeout;
     }
@@ -166,6 +172,7 @@ public final class DebugBundleConfig {
         private int maxProbeEntriesPerLabel = 10;
         private boolean probeFlushOnError = true;
         private LogLevel logLevel = LogLevel.WARNING;
+        private boolean infoBreadcrumbs;
         private Duration requestTimeout = Duration.ofSeconds(5);
         private String projectMode = "connected";
         private String localEventsDir = ".debugbundle/local/events";
@@ -253,6 +260,11 @@ public final class DebugBundleConfig {
             if (logLevel != null) {
                 this.logLevel = logLevel;
             }
+            return this;
+        }
+
+        public Builder infoBreadcrumbs(boolean infoBreadcrumbs) {
+            this.infoBreadcrumbs = infoBreadcrumbs;
             return this;
         }
 

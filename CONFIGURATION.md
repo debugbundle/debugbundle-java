@@ -107,6 +107,7 @@ Capture policy is server-owned. Do not set capture-policy fields in local Java c
 | `debugbundle.max-probe-entries-per-label` | `maxProbeEntriesPerLabel(int)` | `DEBUGBUNDLE_MAX_PROBE_ENTRIES_PER_LABEL` | `debugbundle.max-probe-entries-per-label` | `10` | Entries retained per label. |
 | `debugbundle.probe-flush-on-error` | `probeFlushOnError(boolean)` | `DEBUGBUNDLE_PROBE_FLUSH_ON_ERROR` | `debugbundle.probe-flush-on-error` | `true` | Attach probe ring buffers to captured exceptions. |
 | `debugbundle.log-level` | `logLevel(LogLevel)` | `DEBUGBUNDLE_LOG_LEVEL` | `debugbundle.log-level` | `warning` | Minimum captured log severity. |
+| Programmatic only | `infoBreadcrumbs(boolean)` | — | — | `false` | 3.0 candidate: sample request-scoped INFO into a bounded sanitized ring and attach it to a captured exception when server policy permits. |
 | `debugbundle.request-timeout` | `requestTimeout(Duration)` | `DEBUGBUNDLE_REQUEST_TIMEOUT` | `debugbundle.request-timeout` | `5s` | HTTP transport timeout. |
 | `debugbundle.project-mode` | `projectMode(String)` | `DEBUGBUNDLE_PROJECT_MODE` | `debugbundle.project-mode` | `connected` | `connected` or `local-only`. |
 | `debugbundle.local-events-dir` | `localEventsDir(String)` | `DEBUGBUNDLE_LOCAL_EVENTS_DIR` | `debugbundle.local-events-dir` | `.debugbundle/local/events` | Local event file destination. |
@@ -218,6 +219,7 @@ Connected-mode startup rules:
 - Missing token: the SDK does not throw, host startup continues, and `DebugBundle.status()` reports `DISCONNECTED`.
 - Invalid or revoked token: startup remains non-throwing; the SDK moves to `DEGRADED` after the first failed delivery attempt.
 - Local-only mode: a token is optional. This is the supported no-cloud path for first-event verification and offline workflows.
+- The 3.0 candidate fetches initial remote policy asynchronously; startup and application capture do not wait for the config endpoint. A safe local policy applies until the fetch finishes.
 
 ## App-Driven Verification
 

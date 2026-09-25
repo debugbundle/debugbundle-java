@@ -20,10 +20,14 @@ MAVEN_RUN = docker run --rm -t \
 	-w "$(WORKDIR)" \
 	$(MAVEN_IMAGE)
 
-.PHONY: test verify smoke smoke-wildfly shell
+.PHONY: test test-core-focused verify smoke smoke-wildfly shell
 
 test:
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) clean test
+
+TEST_CLASS ?= DebugBundleCaptureSafetyTest
+test-core-focused:
+	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) -pl debugbundle-java-core -Dtest=$(TEST_CLASS) test
 
 verify:
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) clean verify
@@ -38,7 +42,7 @@ else
 endif
 
 smoke-wildfly:
-	$(MAVEN_RUN) sh -lc 'mvn -q -DskipTests install && mvn -q -f smoke/wildfly-multiwar/orders/pom.xml package && mvn -q -f smoke/wildfly-multiwar/identity/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/orders-legacy/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/identity-legacy/pom.xml package'
+	$(MAVEN_RUN) sh -lc 'mvn -q -DskipTests -Djacoco.skip=true install && mvn -q -f smoke/wildfly-multiwar/orders/pom.xml package && mvn -q -f smoke/wildfly-multiwar/identity/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/orders-legacy/pom.xml package && mvn -q -f smoke/wildfly-multiwar-javax/identity-legacy/pom.xml package'
 	./smoke/run-wildfly-multiwar-smoke.sh
 
 shell:

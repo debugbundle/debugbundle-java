@@ -1,9 +1,8 @@
 package com.debugbundle.sdk;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
@@ -12,9 +11,15 @@ final class DebugBundleJulHandler extends Handler {
     private static final ThreadLocal<Boolean> IN_PUBLISH = ThreadLocal.withInitial(() -> false);
 
     private final Supplier<DebugBundleClient> clientSupplier;
+    private final JavaStackTraceAssembler stackTraces;
 
     DebugBundleJulHandler(Supplier<DebugBundleClient> clientSupplier) {
+        this(clientSupplier, new JavaStackTraceAssembler());
+    }
+
+    DebugBundleJulHandler(Supplier<DebugBundleClient> clientSupplier, JavaStackTraceAssembler stackTraces) {
         this.clientSupplier = clientSupplier;
+        this.stackTraces = stackTraces;
     }
 
     @Override
@@ -29,6 +34,15 @@ final class DebugBundleJulHandler extends Handler {
                 return;
             }
 
+            LogLevel level = LogLevel.fromJulLevel(record.getLevel());
+            boolean logEligible = !(client instanceof DefaultDebugBundleClient defaultClient)
+                    || defaultClient.shouldCaptureLogOrBreadcrumb(level);
+            if (!logEligible && level != LogLevel.ERROR && level != LogLevel.CRITICAL) return;
+            Throwable thrown = record.getThrown();
+            if (!logEligible && thrown == null) {
+                return;
+            }
+
             IN_PUBLISH.set(true);
             Map<String, Object> context = new LinkedHashMap<>();
             putIfNotBlank(context, "logger", record.getLoggerName());
@@ -40,17 +54,18 @@ final class DebugBundleJulHandler extends Handler {
                 context.put("mdc", mdc);
             }
 
-            Map<String, Object> throwable = throwable(record.getThrown());
-            if (!throwable.isEmpty()) {
-                context.put("throwable", throwable);
+            String message = resolvedMessage(record);
+            if (message != null && message.length() > 16_384) message = message.substring(0, 16_384);
+            if (thrown != null) {
+                putIfNotBlank(context, "log_message", message);
+                client.captureException(thrown, context);
+                return;
             }
 
-            client.captureLog(
-                    resolvedMessage(record),
-                    LogLevel.fromJulLevel(record.getLevel()),
-                    context
-            );
-        } catch (RuntimeException ignored) {
+            if (client instanceof DefaultDebugBundleClient defaultClient
+                    && stackTraces.accept(record, message, level, context, defaultClient)) return;
+            client.captureLog(message, level, context);
+        } catch (Throwable ignored) {
         } finally {
             IN_PUBLISH.remove();
         }
@@ -62,6 +77,15 @@ final class DebugBundleJulHandler extends Handler {
 
     @Override
     public void close() {
+        stackTraces.close();
+    }
+
+    CompletableFuture<Void> drainPendingStacks() {
+        return stackTraces.drainPending();
+    }
+
+    CompletableFuture<Void> sweepStacks() {
+        return stackTraces.sweepNow();
     }
 
     private String resolvedMessage(LogRecord record) {
@@ -80,32 +104,13 @@ final class DebugBundleJulHandler extends Handler {
 
         Map<String, Object> mdc = new LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : mapValue.entrySet()) {
+            if (mdc.size() >= 64) break;
             if (entry.getKey() == null || entry.getValue() == null) {
                 continue;
             }
             mdc.put(String.valueOf(entry.getKey()), entry.getValue());
         }
         return mdc;
-    }
-
-    private Map<String, Object> throwable(Throwable error) {
-        if (error == null) {
-            return Map.of();
-        }
-
-        Map<String, Object> throwable = new LinkedHashMap<>();
-        throwable.put("class", error.getClass().getName());
-        throwable.put("message", error.getMessage());
-        throwable.put("stacktrace", stackTrace(error));
-        return throwable;
-    }
-
-    private String stackTrace(Throwable error) {
-        StringWriter stringWriter = new StringWriter();
-        PrintWriter printWriter = new PrintWriter(stringWriter);
-        error.printStackTrace(printWriter);
-        printWriter.flush();
-        return stringWriter.toString();
     }
 
     private Object invoke(LogRecord record, String methodName) {

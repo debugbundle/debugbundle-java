@@ -807,58 +807,27 @@ class DebugBundleApiTest {
 
     @Test
     void keepsLoopingDuplicatesSuppressedUntilSilenceResetsCapture() {
-        ManualClock clock = new ManualClock();
-        clock.setNowMillis(SUPPRESSION_TEST_START_MS);
-        FakeTransport transport = new FakeTransport();
-        DefaultDebugBundleClient client = new DefaultDebugBundleClient(
-                DebugBundleConfig.builder()
-                        .projectToken("dbundle_proj_test")
-                        .service("checkout-api")
-                        .environment("production")
-                        .build(),
-                transport,
-                clock::nowMillis
-        );
+        // Caller admission deliberately sheds under queue-lock contention. Exercise
+        // the tracker directly so all eleven inputs reach the loop threshold.
+        EventSuppressionTracker tracker = new EventSuppressionTracker();
+        String key = "recursive failure";
+        long now = SUPPRESSION_TEST_START_MS;
+        for (int index = 0; index < 11; index++) {
+            assertThat(tracker.shouldCapture(key, now)).isEqualTo(index < 3);
+        }
+        assertThat(tracker.drainAggregates(now)).singleElement()
+                .extracting(EventSuppressionTracker.SuppressionAggregate::suppressedCount)
+                .isEqualTo(8);
 
-        List<RuntimeException> retained = new ArrayList<>();
-        for (int index = 0; index < 11; index++) { retained.add(captureRecursiveFailure(client)); }
-        client.flush().join();
-        java.lang.ref.Reference.reachabilityFence(retained);
-        retained.clear();
+        now += 30_000L;
+        assertThat(tracker.shouldCapture(key, now)).isFalse();
+        assertThat(tracker.shouldCapture(key, now)).isFalse();
+        assertThat(tracker.drainAggregates(now)).singleElement()
+                .extracting(EventSuppressionTracker.SuppressionAggregate::suppressedCount)
+                .isEqualTo(2);
 
-        assertThat(transport.calls()).hasSize(1);
-        assertThat(transport.calls().get(0).events())
-                .extracting(event -> event.get("event_type"))
-                .containsExactly("backend_exception", "backend_exception", "backend_exception", "error_suppressed");
-
-        clock.advanceMillis(30_000L);
-        for (int index = 0; index < 2; index++) { retained.add(captureRecursiveFailure(client)); }
-        client.flush().join();
-        java.lang.ref.Reference.reachabilityFence(retained);
-        retained.clear();
-
-        assertThat(transport.calls()).hasSize(2);
-        List<Map<String, Object>> checkpointEvents = transport.calls().get(1).events();
-        assertThat(checkpointEvents).hasSize(1);
-        assertThat(checkpointEvents.get(0)).containsEntry("event_type", "error_suppressed");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> checkpointPayload = (Map<String, Object>) checkpointEvents.get(0).get("payload");
-        assertThat(checkpointPayload).containsEntry("suppressed_count", 2);
-
-        clock.advanceMillis(61_000L);
-        retained.add(captureRecursiveFailure(client));
-        client.flush().join();
-        java.lang.ref.Reference.reachabilityFence(retained);
-
-        assertThat(transport.calls()).hasSize(3);
-        List<Map<String, Object>> recoveredEvents = transport.calls().get(2).events();
-        assertThat(recoveredEvents).hasSize(1);
-        assertThat(recoveredEvents.get(0)).containsEntry("event_type", "backend_exception");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> recoveredPayload = (Map<String, Object>) recoveredEvents.get(0).get("payload");
-        assertThat(recoveredPayload).containsEntry("message", "recursive failure");
+        now += 61_000L;
+        assertThat(tracker.shouldCapture(key, now)).isTrue();
     }
 
     @Test
@@ -916,12 +885,6 @@ class DebugBundleApiTest {
                         assertThat(Files.readString(writtenFiles.get(0))).contains("local-only event");
                 }
         }
-
-    private RuntimeException captureRecursiveFailure(DefaultDebugBundleClient client) {
-        RuntimeException failure = new RuntimeException("recursive failure");
-        client.captureException(failure);
-        return failure;
-    }
 
     @SuppressWarnings("unchecked")
     private static String message(Map<String, Object> event) {

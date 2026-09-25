@@ -434,7 +434,8 @@ class DebugBundleCaptureSafetyTest {
                 DebugBundleConfig.builder()
                         .projectToken(TOKEN)
                         .environment("local")
-                        .batchSize(25)
+                        .batchSize(2_000)
+                        .flushInterval(Duration.ofMinutes(5))
                         .build(),
                 request -> new TransportResponse(429, 300_000L)
         );
@@ -457,7 +458,8 @@ class DebugBundleCaptureSafetyTest {
                         .projectToken(TOKEN)
                         .environment("local")
                         .logLevel(LogLevel.WARNING)
-                        .batchSize(25)
+                        .batchSize(2_000)
+                        .flushInterval(Duration.ofMinutes(5))
                         .build(),
                 request -> new TransportResponse(429, 300_000L)
         );

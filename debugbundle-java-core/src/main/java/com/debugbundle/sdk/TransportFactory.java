@@ -11,7 +11,7 @@ final class TransportFactory {
             return new FileTransport(config.localEventsDir(), config.service());
         }
 
-        return new HttpTransport(config.endpoint(), config.projectToken());
+        return new HttpTransport(config.endpoint(), config.projectToken(), config.requestTimeout());
     }
 
     static boolean isLocalEnvironment(String environment) {

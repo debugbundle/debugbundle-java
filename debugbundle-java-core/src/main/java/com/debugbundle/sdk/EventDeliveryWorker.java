@@ -104,7 +104,7 @@ final class EventDeliveryWorker {
                     try {
                         if (!closed && pending.stream().anyMatch(item -> item.exception() != null)) scheduleSnapshots();
                     } finally {
-                        queueLock.unlock();
+                        releaseQueueLock();
                     }
                 }
             }, 10L, TimeUnit.MILLISECONDS);
@@ -119,7 +119,7 @@ final class EventDeliveryWorker {
             return false;
         }
         try {
-            if (reservations.get() >= MAX_CAPTURE_RESERVATIONS) {
+            if (closed || reservations.get() >= MAX_CAPTURE_RESERVATIONS) {
                 pressureDrops.incrementAndGet();
                 return false;
             }
@@ -131,7 +131,7 @@ final class EventDeliveryWorker {
             reservations.incrementAndGet();
             return true;
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
@@ -178,7 +178,7 @@ final class EventDeliveryWorker {
             }
             return true;
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
@@ -243,19 +243,29 @@ final class EventDeliveryWorker {
 
     void close() {
         closed = true;
-        if (queueLock.tryLock()) {
-            try {
-                cancelFlush();
-                pending.clear();
-                pendingBytes = 0;
-                evictableLowPriorityCount = 0;
-                inFlightCount = 0;
-            } finally {
-                queueLock.unlock();
-            }
-        }
+        clearClosedQueue();
         executor.shutdownNow();
         completeFlushWaiters(Integer.MAX_VALUE);
+    }
+
+    private void releaseQueueLock() {
+        queueLock.unlock();
+        // Check after unlocking: close either acquires the free lock itself or
+        // leaves cleanup to its current owner, including an admission in progress.
+        clearClosedQueue();
+    }
+
+    private void clearClosedQueue() {
+        if (!closed || !queueLock.tryLock()) return;
+        try {
+            cancelFlush();
+            pending.clear();
+            pendingBytes = 0;
+            evictableLowPriorityCount = 0;
+            inFlightCount = 0;
+        } finally {
+            queueLock.unlock();
+        }
     }
 
     DebugBundleStatus status() {
@@ -267,29 +277,32 @@ final class EventDeliveryWorker {
     }
 
     int pendingCount() {
+        if (closed) return 0;
         if (!queueLock.tryLock()) return MAX_EVENTS;
         try {
             return pending.size();
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
     int pendingBytes() {
+        if (closed) return 0;
         if (!queueLock.tryLock()) return MAX_BYTES;
         try {
             return pendingBytes;
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
     int pendingHighPriorityCount() {
+        if (closed) return 0;
         if (!queueLock.tryLock()) return 0;
         try {
             return (int) pending.stream().filter(PendingEvent::highPriority).count();
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
@@ -309,14 +322,14 @@ final class EventDeliveryWorker {
         List<PendingEvent> batch;
         queueLock.lock();
         try {
-            if (pending.isEmpty() || (nextRetryAtMillis > 0 && now() < nextRetryAtMillis)) return;
+            if (closed || pending.isEmpty() || (nextRetryAtMillis > 0 && now() < nextRetryAtMillis)) return;
             batch = new ArrayList<>(pending.subList(0, Math.min(config.batchSize(), pending.size())));
             inFlightCount = batch.size();
             for (PendingEvent event : batch) {
                 if (!event.highPriority()) evictableLowPriorityCount--;
             }
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
 
         finalizeBatch(batch, false);
@@ -328,7 +341,7 @@ final class EventDeliveryWorker {
             }
             batch = List.copyOf(pending.subList(0, inFlightCount));
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
 
         TransportResponse response;
@@ -340,6 +353,7 @@ final class EventDeliveryWorker {
 
         queueLock.lock();
         try {
+            if (closed) return;
             inFlightCount = 0;
             for (PendingEvent event : batch) {
                 if (!event.highPriority()) evictableLowPriorityCount++;
@@ -355,10 +369,10 @@ final class EventDeliveryWorker {
                 status = DebugBundleStatus.HEALTHY;
                 scheduleNextIfBuffered();
             } else {
-                markRetry(1_000L);
+                markRetry(boundedRetryAfterMillis(response.retryAfterMillis()));
             }
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
@@ -371,7 +385,7 @@ final class EventDeliveryWorker {
             inFlightCount = batch.size();
             evictableLowPriorityCount = 0;
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
         finalizeBatch(batch, true);
         queueLock.lock();
@@ -379,7 +393,7 @@ final class EventDeliveryWorker {
             inFlightCount = 0;
             evictableLowPriorityCount = (int) pending.stream().filter(item -> !item.highPriority()).count();
         } finally {
-            queueLock.unlock();
+            releaseQueueLock();
         }
     }
 
@@ -434,14 +448,14 @@ final class EventDeliveryWorker {
                     pendingBytes += bytes;
                 }
             } finally {
-                queueLock.unlock();
+                releaseQueueLock();
             }
         }
     }
 
     private void applyAcknowledgement(TransportResponse response, List<PendingEvent> batch) {
         IngestionAcknowledgementDecision acknowledgement = IngestionAcknowledgementDecision.decide(
-                response.body(), batch.size()
+                response.body(), batch.size(), transport instanceof HttpTransport
         );
         if (acknowledgement.kind() == IngestionAcknowledgementDecision.Kind.PROTOCOL_FAILURE) {
             markRetry(boundedRetryAfterMillis(response.retryAfterMillis()));

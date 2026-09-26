@@ -1,5 +1,6 @@
 package com.debugbundle.sdk;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -14,7 +15,7 @@ record IngestionAcknowledgementDecision(
         List<IngestionError> terminalErrors,
         String reason
 ) {
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Set<String> RETRYABLE_REASONS = Set.of(
             "rate_limited",
             "monthly_quota_exceeded",
@@ -22,18 +23,22 @@ record IngestionAcknowledgementDecision(
     );
 
     static IngestionAcknowledgementDecision decide(String body, int batchLength) {
+        return decide(body, batchLength, false);
+    }
+
+    static IngestionAcknowledgementDecision decide(String body, int batchLength, boolean required) {
         if (body == null || body.isBlank()) {
-            return legacy();
+            return required ? protocolFailure("missing_acknowledgement") : legacy();
         }
         final JsonNode root;
         try {
             root = OBJECT_MAPPER.readTree(body);
         } catch (Exception ignored) {
-            return legacy();
+            return required ? protocolFailure("invalid_json") : legacy();
         }
         if (!root.isObject()
                 || (!root.has("accepted") && !root.has("rejected") && !root.has("errors"))) {
-            return legacy();
+            return required ? protocolFailure("missing_acknowledgement") : legacy();
         }
         JsonNode acceptedNode = root.get("accepted");
         JsonNode rejectedNode = root.get("rejected");
@@ -59,6 +64,7 @@ record IngestionAcknowledgementDecision(
             if (!errorNode.isObject()
                     || indexNode == null
                     || !indexNode.isIntegralNumber()
+                    || !indexNode.canConvertToInt()
                     || reasonNode == null
                     || !reasonNode.isTextual()) {
                 return protocolFailure("invalid_error_index");

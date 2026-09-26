@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-26
+
+### Fixed
+
+- Apply configured ingestion request timeouts to the actual HTTP request; use the documented five-second default and a sixty-second ceiling.
+- Release queued events after a contended close without waiting on application threads; ignore late send results after close. Honor HTTP-date and service-failure retry hints.
+- Bound numeric HTTP retry hints before duration conversion to prevent overflow; preserve safe fallback for invalid hints.
+
+- Require a valid canonical acknowledgement from built-in HTTP delivery; retain the full batch and back off for missing or malformed responses. Preserve bodyless file and explicit custom transport compatibility.
+
 ## [3.0.0] - 2026-09-25
 
 ### Breaking changes

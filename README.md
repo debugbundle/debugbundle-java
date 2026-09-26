@@ -12,7 +12,7 @@ Requires Java 17 or newer.
 
 Version 3.0 snapshots exceptions on its existing background worker through bounded weak references, preserving original stacks when the input is still reachable. Collected inputs have an explicit unavailable-details fallback. See [snapshot ownership and shutdown limits](MIGRATION-3.0.md#exception-snapshots-and-ownership).
 
-The installation examples below use the `3.0.0` release line. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
+The installation examples below use the `3.0.1` release line. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
 
 ## Modules
 
@@ -35,12 +35,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:3.0.0")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:3.0.1")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -49,7 +49,7 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
@@ -59,7 +59,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-jakarta</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
@@ -67,7 +67,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-javax</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
@@ -77,7 +77,7 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
@@ -85,14 +85,14 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-javax</artifactId>
-  <version>3.0.0</version>
+  <version>3.0.1</version>
 </dependency>
 ```
 
 App-server operators that prefer JVM startup injection can add the bootstrap agent:
 
 ```text
--javaagent:/opt/debugbundle/debugbundle-java-agent-3.0.0.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
+-javaagent:/opt/debugbundle/debugbundle-java-agent-3.0.1.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
@@ -103,7 +103,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>3.0.0</version>
+      <version>3.0.1</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -113,7 +113,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
 
 ```kotlin
 dependencies {
-  implementation(platform("com.debugbundle:debugbundle-java-parent:3.0.0"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:3.0.1"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
 }
@@ -355,7 +355,7 @@ This fallback is not full SDK parity, but it gives operators a safe bridge until
 | `sampleRate` | `1.0` | Fraction of events to keep before transport. |
 | `batchSize` | `25` | Events per batch before flushing. |
 | `flushInterval` | `5 seconds` | Flush interval for buffered events. |
-| `requestTimeout` | `5 seconds` | HTTP transport timeout. |
+| `requestTimeout` | `5 seconds` | Ingestion connection/request timeout, capped at 60 seconds; nonpositive values use the default. Also supplied to remote config requests. |
 | `probesPollInterval` | `60 seconds` | Remote probe config poll interval. |
 | `localEventsDir` | `.debugbundle/local/events` | Local file transport directory. |
 | `maxProbeLabels` | `50` | Maximum distinct probe labels buffered in memory. |
@@ -413,3 +413,9 @@ GitHub Actions publishes stable releases to Maven Central through `.github/workf
 ## License
 
 Apache-2.0. See `LICENSE`.
+
+## Delivery acknowledgement and retry limits
+
+The built-in HTTP transport requires the canonical ingestion acknowledgement (`accepted`, `rejected`, and `errors`). Empty responses, unrelated JSON, malformed counts, or invalid rejection indices retain the full batch with backoff. Valid acknowledgements remove accepted and terminally rejected events and retry only the indexed retryable rejections; an all-rejected batch does not advance `lastEventAt`.
+
+File transports and explicitly supplied custom/legacy transports retain their documented bodyless success fallback. A custom transport that returns acknowledgement fields must return the complete canonical shape. Retry hints (delay seconds or HTTP dates) are bounded to five minutes and measured from response receipt, including partial/protocol acknowledgements and retryable server failures. Without a server hint, existing retry timing is preserved. Failures remain contained within the SDK's existing delivery path.

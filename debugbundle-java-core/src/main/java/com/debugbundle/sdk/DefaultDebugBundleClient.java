@@ -516,7 +516,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "3.0.0",
+                    "3.0.1",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));

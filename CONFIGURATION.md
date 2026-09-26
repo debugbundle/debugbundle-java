@@ -108,7 +108,7 @@ Capture policy is server-owned. Do not set capture-policy fields in local Java c
 | `debugbundle.probe-flush-on-error` | `probeFlushOnError(boolean)` | `DEBUGBUNDLE_PROBE_FLUSH_ON_ERROR` | `debugbundle.probe-flush-on-error` | `true` | Attach probe ring buffers to captured exceptions. |
 | `debugbundle.log-level` | `logLevel(LogLevel)` | `DEBUGBUNDLE_LOG_LEVEL` | `debugbundle.log-level` | `warning` | Minimum captured log severity. |
 | Programmatic only | `infoBreadcrumbs(boolean)` | — | — | `false` | 3.0 candidate: sample request-scoped INFO into a bounded sanitized ring and attach it to a captured exception when server policy permits. |
-| `debugbundle.request-timeout` | `requestTimeout(Duration)` | `DEBUGBUNDLE_REQUEST_TIMEOUT` | `debugbundle.request-timeout` | `5s` | HTTP transport timeout. |
+| `debugbundle.request-timeout` | `requestTimeout(Duration)` | `DEBUGBUNDLE_REQUEST_TIMEOUT` | `debugbundle.request-timeout` | `5s` | Ingestion connection/request timeout (maximum 60s; nonpositive values use 5s); also supplied to remote config requests. |
 | `debugbundle.project-mode` | `projectMode(String)` | `DEBUGBUNDLE_PROJECT_MODE` | `debugbundle.project-mode` | `connected` | `connected` or `local-only`. |
 | `debugbundle.local-events-dir` | `localEventsDir(String)` | `DEBUGBUNDLE_LOCAL_EVENTS_DIR` | `debugbundle.local-events-dir` | `.debugbundle/local/events` | Local event file destination. |
 

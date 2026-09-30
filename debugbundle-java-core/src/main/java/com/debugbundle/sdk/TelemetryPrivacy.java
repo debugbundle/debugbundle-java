@@ -28,7 +28,7 @@ public final class TelemetryPrivacy {
     );
     private static final Pattern HEADER = Pattern.compile("\\b(Authorization|Proxy-Authorization|Cookie|Set-Cookie)\\s*:\\s*[^\\r\\n]*", Pattern.CASE_INSENSITIVE);
     private static final Pattern BEARER = Pattern.compile("\\b(Bearer|Basic)\\s+[A-Za-z0-9._~+/-]{6,}", Pattern.CASE_INSENSITIVE);
-    private static final Pattern TOKEN = Pattern.compile("\\bdbundle_(?:proj|mem|probe|agent)_[A-Za-z0-9_-]+\\b");
+    private static final Pattern TOKEN = Pattern.compile("\\bdbundle_(?:proj|mem|probe|agent|anl|anr|ah)_[A-Za-z0-9_-]+\\b");
     private static final Pattern PEM = Pattern.compile("-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\\s\\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", Pattern.CASE_INSENSITIVE);
     private static final Pattern PEM_START = Pattern.compile("-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", Pattern.CASE_INSENSITIVE);
     private static final Pattern URL = Pattern.compile("\\bhttps?://[^\\s<>\"']+", Pattern.CASE_INSENSITIVE);

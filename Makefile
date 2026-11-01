@@ -67,6 +67,15 @@ shell:
 evidence-performance: maven-runtime-image
 	$(MAVEN_RUN) sh perf/run-evidence-comparison.sh
 
+.PHONY: release-bundle-check release-bundle-test
+release-bundle-test:
+	python3 scripts/test-central-bundle.py
+
+# Stages the complete family without credentials or an external registry write.
+release-bundle-check: maven-runtime-image release-bundle-test
+	$(MAVEN_RUN) $(MAVEN_COMMAND) -B -Prelease -DskipTests -Dgpg.skip=true -Dcentral.publishing.skipUpload=true clean deploy
+	python3 scripts/check-central-bundle.py
+
 # Mirror maintained CI runtimes sequentially; they share module target directories.
 evidence-runtime-matrix:
 	mkdir -p .tmp/evidence-runtime

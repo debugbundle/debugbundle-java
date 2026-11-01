@@ -58,7 +58,8 @@
     <javax.servlet.version>4.0.1</javax.servlet.version>
     <jakarta.ws.rs.version>3.1.0</jakarta.ws.rs.version>
     <javax.ws.rs.version>2.1.1</javax.ws.rs.version>
-    <central.publishing.plugin.version>0.9.0</central.publishing.plugin.version>
+    <central.publishing.plugin.version>0.12.0</central.publishing.plugin.version>
+    <central.publishing.skipUpload>false</central.publishing.skipUpload>
     <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
     <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
     <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
@@ -263,6 +264,7 @@
               <deploymentName>debugbundle-java ${project.version}</deploymentName>
               <autoPublish>true</autoPublish>
               <waitUntil>published</waitUntil>
+              <skipUpload>${central.publishing.skipUpload}</skipUpload>
             </configuration>
           </plugin>
         </plugins>

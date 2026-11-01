@@ -211,6 +211,12 @@ jobs:
         if: steps.published_state.outputs.state == 'none'
         run: make smoke-wildfly JAVA_VERSION=21
 
+      - name: Validate complete Central bundle before upload
+        if: steps.published_state.outputs.state == 'none'
+        run: |
+          mvn -B -ntp clean deploy -Prelease -Dcentral.publishing.skipUpload=true -Dgpg.keyname="${MAVEN_GPG_KEYNAME}"
+          python3 scripts/check-central-bundle.py
+
       - name: Publish to Maven Central
         if: steps.published_state.outputs.state == 'none'
         run: mvn -B -ntp clean deploy -Prelease -Dgpg.keyname="${MAVEN_GPG_KEYNAME}"

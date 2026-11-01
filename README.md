@@ -24,9 +24,9 @@ The installed smoke runs in a separate JVM using the [Maven external-process run
 
 Version 3.0 snapshots exceptions on its existing background worker through bounded weak references, preserving original stacks when the input is still reachable. Collected inputs have an explicit unavailable-details fallback. See [snapshot ownership and shutdown limits](MIGRATION-3.0.md#exception-snapshots-and-ownership).
 
-The installation examples below target the **unpublished 3.1.0 source candidate**. Runtime and release qualification is still in progress. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
+The installation examples below target **3.1.0**, published after the runtime and release gates passed. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
 
-## Evidence candidate
+## Evidence in 3.1.0
 
 New evidence uses the existing config and ingestion requests for capability discovery.
 Unknown or older destinations keep the ordinary event shape. `captureExceptionEvidence`

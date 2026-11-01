@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Prepare 3.1.0 evidence candidate: native cause/suppressed graphs, bounded frames,
+## [3.1.0] - 2026-11-01
+
+- Release 3.1.0 evidence: native cause/suppressed graphs, bounded frames,
   smaller hook-free uncaught evidence, retained stderr provenance, monotonic
   revocable operation scopes and explicit bounded recovery observations.
 - Negotiate support on existing config/ACK requests; preserve legacy receivers,

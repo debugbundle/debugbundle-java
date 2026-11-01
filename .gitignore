@@ -3,5 +3,5 @@
 .vscode/
 *.iml
 target/
+.tmp/
 smoke/**/out/
-

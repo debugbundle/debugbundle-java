@@ -46,6 +46,14 @@ public final class DebugBundle {
         swallow(() -> client().captureException(error, context == null ? Map.of() : context));
     }
 
+    public static void captureRecovery(Map<String, Object> observation) {
+        swallow(() -> client().captureRecovery(observation));
+    }
+
+    public static <T> T runWithOperationContext(Map<String, Object> options, Supplier<T> action) {
+        return client().runWithOperationContext(options, action);
+    }
+
     public static void captureError(Throwable error) {
         swallow(() -> client().captureError(error));
     }
@@ -130,7 +138,11 @@ public final class DebugBundle {
         Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         PREVIOUS_UNCAUGHT.set(previous);
         Thread.UncaughtExceptionHandler installed = (thread, throwable) -> {
-            captureException(throwable, Map.of("thread", thread == null ? "unknown" : thread.getName()));
+            swallow(() -> {
+                Map<String, Object> context = Map.of("thread", thread == null ? "unknown" : thread.getName());
+                if (client() instanceof DefaultDebugBundleClient nativeClient) nativeClient.captureFatalException(throwable, context);
+                else client().captureException(throwable, context);
+            });
             if (previous != null) {
                 previous.uncaughtException(thread, throwable);
             }

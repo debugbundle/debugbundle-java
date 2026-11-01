@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Prepare 3.1.0 evidence candidate: native cause/suppressed graphs, bounded frames,
+  smaller hook-free uncaught evidence, retained stderr provenance, monotonic
+  revocable operation scopes and explicit bounded recovery observations.
+- Negotiate support on existing config/ACK requests; preserve legacy receivers,
+  enforce final capture policy and account diagnostic ownership until ACK/drop.
+  Batch actual UTF-8 request bytes without repeating hooks on retained tails.
+- Preserve browser evidence/context through maintained relays and wrappers, with
+  server identity, downstream proof intersection, bounded native reads and one
+  forwarding budget. Boolean custom forwarders no longer create completion
+  markers without complete acceptance proof; their accepted delivery stays compatible.
+- Preserve legacy async request correlation while revoking new execution ownership.
+
+- Bound native ingestion/config replies to 256 KiB before parsing, require UTF-8
+  identity encoding and cancel stalled streaming bodies at the existing request
+  deadline. Preserve ordinary transport/config status, headers and retry timing.
+
+- Validate complete hook envelopes using the vendored accepting Draft 7 schema;
+  own bounded native JSON results without application serializers. Keep invalid
+  or throwing-hook fallback, but withhold exhausted/unavailable validation and
+  privacy failures without restoring content the hook removed.
+- Preserve standard read-only JDK map/list views on the existing hook worker;
+  delegated callbacks retain that worker's existing callback responsibility.
+  Direct foreign carriers are withheld without invoking their iterators.
+
 ## [3.0.1] - 2026-09-26
 
 ### Fixed

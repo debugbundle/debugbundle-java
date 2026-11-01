@@ -9,7 +9,8 @@ record CapturePolicy(
         CaptureBreadcrumbsMode captureBreadcrumbs,
         CaptureProbeEventsMode captureProbeEvents,
         List<Integer> immediateClientErrorStatuses,
-        List<ImmediateClientErrorPathRule> immediateClientErrorPathRules
+        List<ImmediateClientErrorPathRule> immediateClientErrorPathRules,
+        boolean captureDiagnosticContext
 ) {
     static final CapturePolicy BALANCED = new CapturePolicy(
             "balanced",
@@ -30,6 +31,12 @@ record CapturePolicy(
             List.of(),
             List.of()
     );
+
+    CapturePolicy(String preset, CaptureLogsMode logs, CaptureRequestEventsMode requests,
+            CaptureBreadcrumbsMode breadcrumbs, CaptureProbeEventsMode probes, List<Integer> statuses,
+            List<ImmediateClientErrorPathRule> paths) {
+        this(preset, logs, requests, breadcrumbs, probes, statuses, paths, !"minimal".equals(preset));
+    }
 
     CapturePolicy {
         immediateClientErrorStatuses = List.copyOf(immediateClientErrorStatuses);

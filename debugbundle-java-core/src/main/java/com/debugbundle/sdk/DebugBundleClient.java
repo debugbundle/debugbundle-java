@@ -9,6 +9,12 @@ import java.util.function.Supplier;
 public interface DebugBundleClient extends AutoCloseable {
     DebugBundleConfig config();
 
+    /** Explicit semantic recovery evidence; unsupported custom clients remain compatible. */
+    default void captureRecovery(Map<String, Object> observation) { }
+
+    default <T> T runWithOperationContext(Map<String, Object> options, Supplier<T> action) { return action.get(); }
+
+
     void captureException(Throwable error);
 
     void captureException(Throwable error, Map<String, Object> context);

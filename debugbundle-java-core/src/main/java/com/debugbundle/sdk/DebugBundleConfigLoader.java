@@ -127,6 +127,15 @@ public final class DebugBundleConfigLoader {
                         System.getProperty("debugbundle.local-events-dir"),
                         System.getenv("DEBUGBUNDLE_LOCAL_EVENTS_DIR")
                 ))
+                .captureExceptionEvidence(parseBoolean(firstNonBlank(
+                        primary.get("debugbundle.capture-exception-evidence"), secondary.get("debugbundle.capture-exception-evidence"),
+                        System.getProperty("debugbundle.capture-exception-evidence"), System.getenv("DEBUGBUNDLE_CAPTURE_EXCEPTION_EVIDENCE")), true))
+                .captureRecoveryObservations(parseBoolean(firstNonBlank(
+                        primary.get("debugbundle.capture-recovery-observations"), secondary.get("debugbundle.capture-recovery-observations"),
+                        System.getProperty("debugbundle.capture-recovery-observations"), System.getenv("DEBUGBUNDLE_CAPTURE_RECOVERY_OBSERVATIONS")), false))
+                .evidenceCapabilities(EvidenceDeliveryState.parsePin(firstNonBlank(
+                        primary.get("debugbundle.evidence-capabilities"), secondary.get("debugbundle.evidence-capabilities"),
+                        System.getProperty("debugbundle.evidence-capabilities"), System.getenv("DEBUGBUNDLE_EVIDENCE_CAPABILITIES"))))
                 .build();
     }
 

@@ -77,7 +77,8 @@ public class DebugBundleRelayServlet extends HttpServlet {
                 request.getMethod(),
                 request.getContentType(),
                 request.getRemoteAddr(),
-                request::getHeader
+                request::getHeader,
+                request.getQueryString()
         );
     }
 }

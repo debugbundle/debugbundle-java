@@ -1,6 +1,7 @@
 package com.debugbundle.sdk;
 
 import java.util.List;
+import java.util.Map;
 
 record RemoteConfigSnapshot(
         boolean probesEnabled,
@@ -8,9 +9,15 @@ record RemoteConfigSnapshot(
         List<RemoteProbeDirective> directives,
         long pollIntervalMillis,
         String triggerTokenKey,
-        CapturePolicy capturePolicy
+        CapturePolicy capturePolicy,
+        Map<String, Object> evidenceCapabilities
 ) {
+    RemoteConfigSnapshot(boolean probes, boolean remote, List<RemoteProbeDirective> directives, long interval, String key, CapturePolicy policy) {
+        this(probes, remote, directives, interval, key, policy, EvidenceDeliveryState.descriptor(null));
+    }
+
     RemoteConfigSnapshot {
+        evidenceCapabilities = EvidenceDeliveryState.descriptor(evidenceCapabilities);
         directives = List.copyOf(directives);
     }
 

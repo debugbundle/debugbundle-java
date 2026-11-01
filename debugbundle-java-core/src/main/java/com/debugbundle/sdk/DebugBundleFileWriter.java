@@ -70,13 +70,11 @@ public final class DebugBundleFileWriter {
         if (!target.getParent().equals(directory) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Unsafe DebugBundle marker target.");
         }
-        Files.writeString(
-                target,
-                "",
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.WRITE
-        );
+        try {
+            Files.createFile(target, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS));
+        } catch (UnsupportedOperationException ignored) {
+            Files.createFile(target);
+        }
         setFilePermissions(target);
     }
 

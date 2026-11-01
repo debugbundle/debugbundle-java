@@ -53,5 +53,7 @@ mvn -B -ntp \
   -f "$smoke_pom" \
   -Ddebugbundle.version="$version" \
   compile \
-  exec:java \
-  -Dexec.mainClass=com.debugbundle.smoke.AppDrivenSmoke
+  exec:exec \
+  -Dexec.executable=java \
+  '-Dexec.args=-classpath %classpath com.debugbundle.smoke.AppDrivenSmoke' \
+  -Dexec.timeout=30000

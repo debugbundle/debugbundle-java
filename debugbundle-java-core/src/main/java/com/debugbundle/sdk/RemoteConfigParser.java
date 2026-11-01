@@ -42,7 +42,8 @@ final class RemoteConfigParser {
                     directives,
                     remoteProbesEnabled ? pollIntervalMillis : fallbackPollIntervalMillis,
                     asNonBlankString(root.get("trigger_token_key")),
-                    capturePolicy
+                    capturePolicy,
+                    EvidenceDeliveryState.descriptor(OBJECT_MAPPER.convertValue(root.get("evidence_capabilities"), Object.class))
             );
         } catch (IOException error) {
             return null;
@@ -112,6 +113,7 @@ final class RemoteConfigParser {
             return null;
         }
 
+        if (node.has("capture_diagnostic_context") && !node.get("capture_diagnostic_context").isBoolean()) return null;
         String preset = asNonBlankString(node.get("preset"));
         CapturePolicy.CaptureLogsMode captureLogs = parseCaptureLogsMode(node.get("capture_logs"));
         CapturePolicy.CaptureRequestEventsMode captureRequestEvents = parseCaptureRequestEventsMode(node.get("capture_request_events"));
@@ -136,7 +138,9 @@ final class RemoteConfigParser {
                 captureBreadcrumbs,
                 captureProbeEvents,
                 immediateClientErrorStatuses,
-                immediateClientErrorPathRules
+                immediateClientErrorPathRules,
+                node.has("capture_diagnostic_context") ? node.path("capture_diagnostic_context").isBoolean()
+                        && node.path("capture_diagnostic_context").asBoolean() : !"minimal".equals(preset)
         );
     }
 

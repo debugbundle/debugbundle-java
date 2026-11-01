@@ -3,6 +3,7 @@ package com.debugbundle.sdk;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public final class DebugBundleConfig {
     private final String projectToken;
@@ -25,6 +26,9 @@ public final class DebugBundleConfig {
     private final String localEventsDir;
     private final RemoteConfigFetcher remoteConfigFetcher;
     private final DebugBundleBeforeSend beforeSend;
+    private final boolean captureExceptionEvidence;
+    private final boolean captureRecoveryObservations;
+    private final Map<String, Object> evidenceCapabilities;
 
     private DebugBundleConfig(Builder builder) {
         this.projectToken = builder.projectToken;
@@ -47,6 +51,9 @@ public final class DebugBundleConfig {
         this.localEventsDir = builder.localEventsDir;
         this.remoteConfigFetcher = builder.remoteConfigFetcher;
         this.beforeSend = builder.beforeSend;
+        this.captureExceptionEvidence = builder.captureExceptionEvidence;
+        this.captureRecoveryObservations = builder.captureRecoveryObservations;
+        this.evidenceCapabilities = EvidenceDeliveryState.descriptor(builder.evidenceCapabilities);
     }
 
     public static Builder builder() {
@@ -133,6 +140,12 @@ public final class DebugBundleConfig {
         return beforeSend;
     }
 
+    public boolean captureExceptionEvidence() { return captureExceptionEvidence; }
+
+    public boolean captureRecoveryObservations() { return captureRecoveryObservations; }
+
+    public Map<String, Object> evidenceCapabilities() { return evidenceCapabilities; }
+
     public static final class Builder {
         private String projectToken;
         private String environment = "development";
@@ -178,6 +191,9 @@ public final class DebugBundleConfig {
         private String localEventsDir = ".debugbundle/local/events";
         private RemoteConfigFetcher remoteConfigFetcher;
         private DebugBundleBeforeSend beforeSend;
+        private boolean captureExceptionEvidence = true;
+        private boolean captureRecoveryObservations;
+        private Map<String, Object> evidenceCapabilities;
 
         public Builder projectToken(String projectToken) {
             this.projectToken = projectToken;
@@ -298,6 +314,13 @@ public final class DebugBundleConfig {
             this.beforeSend = beforeSend;
             return this;
         }
+
+        public Builder captureExceptionEvidence(boolean enabled) { captureExceptionEvidence = enabled; return this; }
+
+        public Builder captureRecoveryObservations(boolean enabled) { captureRecoveryObservations = enabled; return this; }
+
+        /** Pins a verified complete destination path; later discovery may revoke support. */
+        public Builder evidenceCapabilities(Map<String, Object> value) { evidenceCapabilities = value; return this; }
 
         public DebugBundleConfig build() {
             return new DebugBundleConfig(this);

@@ -3,11 +3,15 @@ package com.debugbundle.spring.boot;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
 @ConfigurationProperties(prefix = "debugbundle")
 public class DebugBundleProperties {
+    private boolean captureExceptionEvidence = true;
+    private boolean captureRecoveryObservations;
+    private Map<String, Object> evidenceCapabilities;
     private String projectToken;
     private String environment = "development";
     private String service = "unknown-service";
@@ -27,6 +31,13 @@ public class DebugBundleProperties {
     private String localEventsDir = ".debugbundle/local/events";
     @NestedConfigurationProperty
     private Relay relay = new Relay();
+
+    public boolean isCaptureExceptionEvidence() { return captureExceptionEvidence; }
+    public void setCaptureExceptionEvidence(boolean value) { captureExceptionEvidence = value; }
+    public boolean isCaptureRecoveryObservations() { return captureRecoveryObservations; }
+    public void setCaptureRecoveryObservations(boolean value) { captureRecoveryObservations = value; }
+    public Map<String, Object> getEvidenceCapabilities() { return evidenceCapabilities; }
+    public void setEvidenceCapabilities(Map<String, Object> value) { evidenceCapabilities = value; }
 
     public String getProjectToken() {
         return projectToken;

@@ -2,6 +2,7 @@ package com.debugbundle.sdk.web;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.debugbundle.sdk.EvidenceProtocol;
 
 public final class DebugBundleBrowserRelayConfigLoader {
     private DebugBundleBrowserRelayConfigLoader() {
@@ -96,7 +97,10 @@ public final class DebugBundleBrowserRelayConfigLoader {
                     contextLookup.get("debugbundle.relay.environment"),
                     systemLookup.get("debugbundle.relay.environment"),
                     environmentLookup.get("DEBUGBUNDLE_RELAY_ENVIRONMENT")
-                )
+                ),
+                EvidenceProtocol.parsePin(firstNonBlank(initLookup.get("debugbundle.evidence-capabilities"),
+                        contextLookup.get("debugbundle.evidence-capabilities"), systemLookup.get("debugbundle.evidence-capabilities"),
+                        environmentLookup.get("DEBUGBUNDLE_EVIDENCE_CAPABILITIES")))
         );
     }
 

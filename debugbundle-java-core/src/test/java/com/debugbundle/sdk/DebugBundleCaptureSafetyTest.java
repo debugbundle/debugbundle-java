@@ -24,6 +24,31 @@ class DebugBundleCaptureSafetyTest {
     private static final String TOKEN = "dbundle_proj_test";
 
     @Test
+    @SuppressWarnings("unchecked")
+    void validReplacementThatExhaustsPrivacyCannotRestoreRemovedApplicationContent() throws Exception {
+        ConcurrentLinkedQueue<EventBatchRequest> requests = new ConcurrentLinkedQueue<>();
+        DefaultDebugBundleClient client = client(
+                DebugBundleConfig.builder().projectToken(TOKEN).environment("local")
+                        .batchSize(2000).flushInterval(Duration.ofMinutes(5))
+                        .beforeSend(event -> {
+                            ((Map<String, Object>) event.get("payload")).put("message", "app redacted");
+                            Map<String, Object> details = new java.util.LinkedHashMap<>();
+                            for (int i = 0; i < 20; i++) details.put("detail_" + i, "x".repeat(16000));
+                            event.put("context", details);
+                            return event;
+                        }).build(), request -> {
+                    requests.add(request);
+                    return new TransportResponse(202, null);
+                });
+        try {
+            client.captureLog("private original", LogLevel.ERROR);
+            client.flush().get(5, TimeUnit.SECONDS);
+            assertThat(requests).isEmpty();
+            assertThat(client.pendingEventCount()).isZero();
+        } finally { client.close(); }
+    }
+
+    @Test
     void filteredLogsNeverInvokeTheEventHook() {
         AtomicInteger hookCalls = new AtomicInteger();
         DefaultDebugBundleClient client = client(

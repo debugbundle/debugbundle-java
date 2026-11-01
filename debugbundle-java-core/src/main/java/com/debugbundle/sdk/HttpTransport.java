@@ -44,15 +44,19 @@ final class HttpTransport implements DebugBundleTransport {
             Map<String, Object> payload = new HashMap<>();
             payload.put("events", request.events());
 
+            String body = JsonWriter.write(payload);
+            if (body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > IngestionWire.MAX_BODY_BYTES)
+                return new TransportResponse(413, null);
             HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(endpoint))
+                    .uri(URI.create(EvidenceDeliveryState.url(endpoint)))
                     .timeout(requestTimeout)
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + projectToken)
-                    .POST(HttpRequest.BodyPublishers.ofString(JsonWriter.write(payload)))
+                    .header("Accept-Encoding", "identity")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = BoundedHttpResponse.send(httpClient, httpRequest);
             return new TransportResponse(response.statusCode(), parseRetryAfterMillis(response), response.body());
         } catch (IOException | InterruptedException | IllegalArgumentException error) {
             if (error instanceof InterruptedException) {

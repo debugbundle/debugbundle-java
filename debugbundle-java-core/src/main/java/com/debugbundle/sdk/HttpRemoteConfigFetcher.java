@@ -25,13 +25,14 @@ final class HttpRemoteConfigFetcher implements RemoteConfigFetcher {
                     .header("Authorization", "Bearer " + request.projectToken())
                     .header("x-debugbundle-sdk", request.sdkName())
                     .header("x-debugbundle-sdk-version", request.sdkVersion())
+                    .header("Accept-Encoding", "identity")
                     .GET();
 
             if (request.ifNoneMatch() != null && !request.ifNoneMatch().isBlank()) {
                 builder.header("If-None-Match", request.ifNoneMatch());
             }
 
-            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = BoundedHttpResponse.send(httpClient, builder.build());
             return new RemoteConfigResponse(
                     response.statusCode(),
                     response.body(),

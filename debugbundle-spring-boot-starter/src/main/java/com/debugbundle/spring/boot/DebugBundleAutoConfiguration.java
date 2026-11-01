@@ -41,6 +41,9 @@ public class DebugBundleAutoConfiguration {
                 .requestTimeout(properties.getRequestTimeout())
                 .projectMode(properties.getProjectMode())
                 .localEventsDir(properties.getLocalEventsDir())
+                .captureExceptionEvidence(properties.isCaptureExceptionEvidence())
+                .captureRecoveryObservations(properties.isCaptureRecoveryObservations())
+                .evidenceCapabilities(properties.getEvidenceCapabilities())
                 .build());
     }
 

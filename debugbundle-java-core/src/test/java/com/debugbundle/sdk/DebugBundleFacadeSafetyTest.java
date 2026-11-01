@@ -38,6 +38,9 @@ class DebugBundleFacadeSafetyTest {
 
         assertThatCode(() -> DebugBundle.captureException(failure)).doesNotThrowAnyException();
         assertThatCode(() -> DebugBundle.captureException(failure, null)).doesNotThrowAnyException();
+        assertThatCode(() -> DebugBundle.captureRecovery(Map.of())).doesNotThrowAnyException();
+        assertThat(DebugBundle.runWithOperationContext(Map.of("kind", "command"), () -> "legacy result"))
+                .isEqualTo("legacy result");
         assertThatCode(() -> DebugBundle.captureError(failure)).doesNotThrowAnyException();
         assertThatCode(() -> DebugBundle.captureLog("log", LogLevel.ERROR)).doesNotThrowAnyException();
         assertThatCode(() -> DebugBundle.captureLog("log", LogLevel.ERROR, null)).doesNotThrowAnyException();

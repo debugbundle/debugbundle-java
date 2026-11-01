@@ -20,6 +20,99 @@ class HttpClientTransportTest {
     private HttpServer server;
 
     @Test
+    void discoversProofOnExistingAckAndDowngradesRejectedOriginalOnlyOnce() throws Exception {
+        var requests = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var query = new AtomicReference<String>();
+        var now = new AtomicLong(1773446400000L);
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        server = startServer(exchange -> {
+            query.set(exchange.getRequestURI().getQuery());
+            requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            int call = calls.incrementAndGet();
+            String proof = "\"evidence_capabilities\":{\"version\":1,\"features\":"
+                    + (call == 1 ? "[\"exception_evidence_v1\"]" : "[]") + "}";
+            respond(exchange, 202, call == 2
+                    ? "{\"accepted\":0,\"rejected\":1,\"errors\":[{\"index\":0,\"reason\":\"invalid_event\"}]," + proof + "}"
+                    : "{\"accepted\":1,\"rejected\":0,\"errors\":[]," + proof + "}", Map.of());
+        });
+        var hooks = new java.util.concurrent.atomic.AtomicInteger();
+        var config = DebugBundleConfig.builder().projectToken("synthetic").environment("test")
+                .flushInterval(Duration.ofHours(1)).beforeSend(event -> { hooks.incrementAndGet(); return event; }).build();
+        try (var client = new DefaultDebugBundleClient(config, new HttpTransport(endpoint("/events"), "synthetic"), now::get)) {
+            client.captureMessage("discover", LogLevel.ERROR, Map.of()); client.flush().join();
+            client.captureException(new RuntimeException("preserve original")); client.flush().join();
+            assertPending(client, 1);
+            now.addAndGet(1001); client.flush().join();
+            assertThat(requests).hasSize(3);
+            assertThat(query.get()).contains("debugbundle_evidence=1");
+            assertThat(requests.get(1)).contains("exception_evidence", "preserve original");
+            assertThat(requests.get(2)).contains("preserve original").doesNotContain("exception_evidence");
+            assertThat(hooks).hasValue(2);
+            assertThat(client.pendingEventCount()).isZero();
+        }
+    }
+
+    @Test
+    void nativeBatchesUseActualWireBytesAndRetainFinalizedTails() throws Exception {
+        var sizes = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        var accepted = new java.util.concurrent.atomic.AtomicInteger();
+        var hooks = new java.util.concurrent.atomic.AtomicInteger();
+        server = startServer(exchange -> {
+            byte[] data = exchange.getRequestBody().readAllBytes();
+            sizes.add(data.length);
+            int count = new com.fasterxml.jackson.databind.ObjectMapper().readTree(data).path("events").size();
+            if (data.length > 262144) respond(exchange, 413, "{}", Map.of());
+            else { accepted.addAndGet(count); respond(exchange, 202,
+                    "{\"accepted\":" + count + ",\"rejected\":0,\"errors\":[]}", Map.of()); }
+        });
+        var config = DebugBundleConfig.builder().projectToken("synthetic").environment("test")
+                .batchSize(1000).flushInterval(Duration.ofHours(1)).beforeSend(event -> { hooks.incrementAndGet(); return event; }).build();
+        try (var client = new DefaultDebugBundleClient(config, new HttpTransport(endpoint("/events"), "synthetic"), System::currentTimeMillis)) {
+            for (int i = 0; i < 25; i++) client.captureMessage("x".repeat(16000), LogLevel.ERROR, Map.of("sequence", i, "detail", "y".repeat(8000)));
+            for (int i = 0; i < 5 && client.pendingEventCount() > 0; i++) client.flush().join();
+            assertThat(sizes.stream().allMatch(size -> size <= 262144)).isTrue();
+            assertThat(accepted).hasValue(25);
+            assertThat(hooks).hasValue(25);
+            assertThat(client.pendingEventCount()).isZero();
+        }
+    }
+
+    @Test
+    void nativeIngestionAndConfigRepliesAreBoundedBeforeParsing() throws Exception {
+        server = startServer(exchange -> respond(exchange, 202, "x".repeat(262145), Map.of()));
+        TransportResponse ingestion = new HttpTransport(endpoint("/events"), "synthetic-project")
+                .send(new EventBatchRequest(List.of()));
+        assertThat(ingestion.statusCode()).isEqualTo(202);
+        assertThat(ingestion.body() == null).isTrue();
+        RemoteConfigResponse config = new HttpRemoteConfigFetcher().fetch(new RemoteConfigRequest(
+                endpoint("/config"), "synthetic-project", "sdk", "candidate", null, Duration.ofSeconds(2)));
+        assertThat(config.responseBody() == null).isTrue();
+    }
+
+    @Test
+    void aStreamingReplyCannotRenewTheNativeRequestDeadline() throws Exception {
+        server = startServer(exchange -> {
+            exchange.sendResponseHeaders(202, 0);
+            try {
+                for (int i = 0; i < 100; i++) {
+                    exchange.getResponseBody().write(' ');
+                    exchange.getResponseBody().flush();
+                    Thread.sleep(20);
+                }
+            } catch (IOException ignored) {
+                // The bounded client closes this synthetic stream at its deadline.
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally { exchange.close(); }
+        });
+        long started = System.nanoTime();
+        TransportResponse response = new HttpTransport(endpoint("/events"), "synthetic-project", Duration.ofMillis(80))
+                .send(new EventBatchRequest(List.of()));
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(750));
+        assertThat(response.body()).isNull();
+    }
+
+    @Test
     void configuredRequestTimeoutStopsWaitingForAStalledIngestionResponse() throws Exception {
         var release = new java.util.concurrent.CountDownLatch(1);
         server = startServer(exchange -> {
@@ -131,6 +224,16 @@ class HttpClientTransportTest {
                 assertThat(client.lastEventAt()).isPresent();
             }
         }
+    }
+
+    private static void assertPending(DefaultDebugBundleClient client, int expected) throws InterruptedException {
+        // The nonblocking inspector reports its capacity sentinel during a short
+        // queue lock. Observe the settled count without changing capture safety.
+        int count = client.pendingEventCount();
+        for (int attempt = 0; attempt < 100 && count == 1000; attempt++) {
+            Thread.sleep(2); count = client.pendingEventCount();
+        }
+        assertThat(count).isEqualTo(expected);
     }
 
     @AfterEach

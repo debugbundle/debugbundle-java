@@ -11,7 +11,7 @@ final class DebugBundleBrowserRelayHandler {
     private final DebugBundleBrowserRelay relay;
 
     DebugBundleBrowserRelayHandler(DebugBundleProperties properties) {
-        this(properties, new DebugBundleBrowserRelay.HttpRelayForwarder(toConfig(properties))::forward);
+        this.relay = new DebugBundleBrowserRelay(toConfig(properties));
     }
 
     DebugBundleBrowserRelayHandler(DebugBundleProperties properties, RelayForwarder relayForwarder) {
@@ -35,7 +35,8 @@ final class DebugBundleBrowserRelayHandler {
                 resolved.getRelay().getSpoolDir(),
                 resolved.getRelay().getAllowedOrigins(),
             resolved.getRelay().getService(),
-            resolved.getRelay().getEnvironment()
+            resolved.getRelay().getEnvironment(),
+            resolved.getEvidenceCapabilities()
         );
     }
 
@@ -44,7 +45,8 @@ final class DebugBundleBrowserRelayHandler {
                 request.getMethod(),
                 request.getContentType(),
                 request.getRemoteAddr(),
-                request::getHeader
+                request::getHeader,
+                request.getQueryString()
         );
     }
 

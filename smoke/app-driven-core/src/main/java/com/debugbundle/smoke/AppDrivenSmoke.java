@@ -78,6 +78,7 @@ public final class AppDrivenSmoke {
                 client.close();
             }
         }
+        EvidenceSmoke.run();
     }
 
     private static void assertContains(String payload, String expected) {

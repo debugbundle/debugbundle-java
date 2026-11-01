@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "3.0.1";
+    private static final String SDK_VERSION = "3.1.0";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -81,6 +81,10 @@ final class EventFactory {
     }
 
     Map<String, Object> completeExceptionEvent(Map<String, Object> shell, Throwable error) {
+        return completeExceptionEvent(shell, error, config.captureExceptionEvidence());
+    }
+
+    Map<String, Object> completeExceptionEvent(Map<String, Object> shell, Throwable error, boolean evidence) {
         Map<String, Object> event = new LinkedHashMap<>(shell);
         Map<String, Object> payload = new LinkedHashMap<>(extractMap(shell, "payload"));
         Map<String, Object> runtime = RuntimeFacts.capture();
@@ -88,9 +92,12 @@ final class EventFactory {
         payload.put("runtime", runtime);
         if (error != null) {
             payload.put("message", safeThrowableMessage(error));
-            payload.put("stack", buildStackTrace(error));
+            var snapshot = ExceptionSnapshot.capture(error, this::safeThrowableMessage, evidence, Boolean.FALSE.equals(payload.get("handled")));
+            payload.put("stack", snapshot.stack());
+            if (snapshot.evidence() != null) payload.put("exception_evidence", snapshot.evidence());
         }
         event.put("payload", payload);
+        if (Boolean.FALSE.equals(payload.get("handled"))) ExceptionEvidenceBudget.fitFatal(event);
         return event;
     }
 
@@ -113,6 +120,10 @@ final class EventFactory {
         payload.put("response", redact(responsePayload(response.isEmpty() ? inputContext : response)));
         return baseEvent("backend_exception", payload, extractCorrelation(inputContext),
                 residualContext(inputContext), occurredAt);
+    }
+
+    Map<String, Object> buildDiagnosticEvent(Map<String, Object> payload, Map<String, Object> context) {
+        return baseEvent("diagnostic_context", payload, extractCorrelation(context), Map.of());
     }
 
     Map<String, Object> buildLogEvent(String message, LogLevel level, Map<String, Object> inputContext) {
@@ -290,39 +301,6 @@ final class EventFactory {
         }
     }
 
-    private String buildStackTrace(Throwable error) {
-        StringBuilder builder = new StringBuilder();
-        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        Throwable current = error;
-        int causes = 0;
-        while (current != null && causes < 8 && seen.add(current) && builder.length() < 32_768) {
-            if (causes > 0) builder.append("\nCaused by: ");
-            builder.append(current.getClass().getName()).append(": ").append(safeThrowableMessage(current));
-            StackTraceElement[] frames;
-            try {
-                frames = current.getStackTrace();
-            } catch (Throwable ignored) {
-                frames = new StackTraceElement[0];
-            }
-            if (frames == null) frames = new StackTraceElement[0];
-            for (int index = 0; index < Math.min(frames.length, 64) && builder.length() < 32_768; index++) {
-                StackTraceElement element = frames[index];
-                builder.append("\n at ")
-                        .append(element.getClassName()).append(".").append(element.getMethodName())
-                        .append("(").append(element.getFileName()).append(":")
-                        .append(element.getLineNumber()).append(")");
-            }
-            if (frames.length > 64) builder.append("\n ... ").append(frames.length - 64).append(" more");
-            try {
-                current = current.getCause();
-            } catch (Throwable ignored) {
-                break;
-            }
-            causes++;
-        }
-        return builder.substring(0, Math.min(builder.length(), 32_768));
-    }
-
     private String safeThrowableMessage(Throwable error) {
         try {
             String message = error.getMessage();
@@ -370,19 +348,6 @@ final class EventFactory {
             return numberValue;
         }
         return fallback;
-    }
-
-    private List<Map<String, Object>> buildStackFrames(Throwable error) {
-        List<Map<String, Object>> frames = new ArrayList<>();
-        for (StackTraceElement element : error.getStackTrace()) {
-            Map<String, Object> frame = new LinkedHashMap<>();
-            frame.put("class", element.getClassName());
-            frame.put("method", element.getMethodName());
-            frame.put("file", element.getFileName());
-            frame.put("line", element.getLineNumber());
-            frames.add(frame);
-        }
-        return frames;
     }
 
     @SuppressWarnings("unchecked")

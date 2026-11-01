@@ -2,16 +2,13 @@ package com.debugbundle.sdk.web;
 
 import com.debugbundle.sdk.DebugBundleFileWriter;
 import com.debugbundle.sdk.TelemetryPrivacy;
+import com.debugbundle.sdk.EvidenceProtocol;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -30,6 +27,7 @@ public final class DebugBundleBrowserRelay {
     private static final String DELIVERED_MARKER_SUFFIX = ".delivered";
     private static final Set<String> ACCEPTED_EVENT_TYPES = Set.of(
             "frontend_exception",
+            "diagnostic_context",
             "error_suppressed",
             "frontend_breadcrumb",
             "request_event",
@@ -52,6 +50,7 @@ public final class DebugBundleBrowserRelay {
     );
 
     private final Config config;
+    private final EvidenceProtocol.State evidence;
     private final RelayForwarder relayForwarder;
     private final Supplier<Long> currentEpochSecond;
     private final Map<String, ArrayDeque<Long>> rateLimitState = new ConcurrentHashMap<>();
@@ -66,6 +65,7 @@ public final class DebugBundleBrowserRelay {
 
     DebugBundleBrowserRelay(Config config, RelayForwarder relayForwarder, Supplier<Long> currentEpochSecond) {
         this.config = config == null ? new Config(null, null, null, null, 60, true, null, List.of()) : config;
+        this.evidence = new EvidenceProtocol.State(this.config.evidenceCapabilities());
         this.relayForwarder = relayForwarder == null ? acceptedEvents -> true : relayForwarder;
         this.currentEpochSecond = currentEpochSecond == null ? () -> Instant.now().getEpochSecond() : currentEpochSecond;
     }
@@ -112,9 +112,11 @@ public final class DebugBundleBrowserRelay {
 
         List<Map<String, Object>> acceptedEvents = new ArrayList<>();
         List<String> errors = new ArrayList<>();
+        List<Map<String, Object>> indexedErrors = new ArrayList<>();
         for (int index = 0; index < rawBatch.size(); index++) {
             Object candidate = rawBatch.get(index);
             if (!(candidate instanceof Map<?, ?> rawEvent)) {
+                indexedErrors.add(Map.of("index", index, "reason", "invalid_event"));
                 errors.add("batch[" + index + "]: Relay events must be objects.");
                 continue;
             }
@@ -123,13 +125,21 @@ public final class DebugBundleBrowserRelay {
             Map<String, Object> event = (Map<String, Object>) rawEvent;
             String eventType = asNonBlankString(event.get("event_type"));
             if (eventType == null || !ACCEPTED_EVENT_TYPES.contains(eventType)) {
+                indexedErrors.add(Map.of("index", index, "reason", "invalid_event"));
                 errors.add("batch[" + index + "]: Unsupported browser relay event type "
                         + (eventType == null ? "unknown" : eventType) + ".");
                 continue;
             }
 
             Map<String, Object> sanitized = sanitizeEvent(event);
+            if (sanitized != null) sanitized = evidence.filter(sanitized);
+            if (sanitized != null && !"local-only".equals(normalize(config.projectMode()))) {
+                var fitted = EvidenceProtocol.fit(eventsWithProjectToken(List.of(sanitized)).get(0));
+                if (fitted == null) sanitized = null;
+                else { fitted.remove("project_token"); sanitized = fitted; }
+            }
             if (sanitized == null) {
+                indexedErrors.add(Map.of("index", index, "reason", "invalid_event"));
                 errors.add("batch[" + index + "]: Invalid browser relay event payload.");
                 continue;
             }
@@ -141,6 +151,11 @@ public final class DebugBundleBrowserRelay {
             return Response.empty(500, corsHeaders);
         }
 
+        if (request.discoversEvidence()) {
+            Map<String, Object> payload = new LinkedHashMap<>(Response.withBody(202, acceptedEvents.size(), errors.size(), errors).body());
+            payload.put("evidence_errors", indexedErrors); payload.put("evidence_capabilities", evidence.descriptor());
+            return new Response(202, payload, corsHeaders);
+        }
         if (!errors.isEmpty()) {
             return Response.withBody(400, acceptedEvents.size(), errors.size(), errors).withHeaders(corsHeaders);
         }
@@ -169,13 +184,15 @@ public final class DebugBundleBrowserRelay {
                 return false;
             }
 
-            if (relayForwarder.forward(eventsWithProjectToken(acceptedEvents)) && writtenFile != null) {
-                markDelivered(writtenFile);
-            }
+            ForwardResult result = relayForwarder.forwardVerified(eventsWithProjectToken(acceptedEvents));
+            evidence.observe(result.capabilities());
+            if (result.success() && result.complete()) markDelivered(writtenFile);
             return true;
         }
 
-        return relayForwarder.forward(eventsWithProjectToken(acceptedEvents));
+        ForwardResult result = relayForwarder.forwardVerified(eventsWithProjectToken(acceptedEvents));
+        evidence.observe(result.capabilities());
+        return result.success();
     }
 
     private List<Map<String, Object>> eventsWithProjectToken(List<Map<String, Object>> events) {
@@ -273,18 +290,24 @@ public final class DebugBundleBrowserRelay {
             }
         }
 
+        boolean typed = "diagnostic_context".equals(eventType) || payload.containsKey("exception_evidence")
+                || payload.containsKey("resource_observations") || payload.containsKey("execution");
+        if (typed && !EvidenceProtocol.valid(event)) return null;
         sanitized.put("payload", stripProtectedFields(payload, 0));
+        if (event.get("context") instanceof Map<?, ?> context) sanitized.put("context", stripProtectedFields(context, 0));
         try {
             if (!TelemetryPrivacy.hasSafeEventIdentity(sanitized, Set.of())) return null;
             Map<String, Object> fields = new LinkedHashMap<>();
             fields.put("service", sanitizedService);
             fields.put("payload", sanitized.get("payload"));
+            if (sanitized.containsKey("context")) fields.put("context", sanitized.get("context"));
             @SuppressWarnings("unchecked")
             Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(fields, Set.of());
             if (!(safe.get("service") instanceof Map<?, ?>) || !(safe.get("payload") instanceof Map<?, ?>)) return null;
             sanitized.put("service", safe.get("service"));
             sanitized.put("payload", safe.get("payload"));
-            return sanitized;
+            if (safe.containsKey("context")) sanitized.put("context", safe.get("context"));
+            return typed && !EvidenceProtocol.valid(sanitized) ? null : sanitized;
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -438,7 +461,7 @@ public final class DebugBundleBrowserRelay {
         return Map.of(
                 "Access-Control-Allow-Origin", origin,
                 "Access-Control-Allow-Methods", "POST, OPTIONS",
-                "Access-Control-Allow-Headers", "content-type",
+                "Access-Control-Allow-Headers", "content-type,x-debugbundle-evidence",
                 "Access-Control-Max-Age", "600",
                 "Vary", "Origin"
         );
@@ -447,6 +470,14 @@ public final class DebugBundleBrowserRelay {
     @FunctionalInterface
     public interface RelayForwarder {
         boolean forward(List<Map<String, Object>> acceptedEvents);
+
+        default ForwardResult forwardVerified(List<Map<String, Object>> acceptedEvents) {
+            return new ForwardResult(forward(acceptedEvents), false, EvidenceProtocol.descriptor(null));
+        }
+    }
+
+    public record ForwardResult(boolean success, boolean complete, Map<String, Object> capabilities) {
+        public ForwardResult { capabilities = EvidenceProtocol.descriptor(capabilities); }
     }
 
     @FunctionalInterface
@@ -464,8 +495,13 @@ public final class DebugBundleBrowserRelay {
             String spoolDir,
             List<String> allowedOrigins,
             String service,
-            String environment
+            String environment,
+            Map<String, Object> evidenceCapabilities
     ) {
+        public Config(String token, String endpoint, String mode, String directory, int rate, boolean durable,
+                String spool, List<String> origins, String service, String environment) {
+            this(token, endpoint, mode, directory, rate, durable, spool, origins, service, environment, null);
+        }
         public Config(
                 String projectToken,
                 String endpoint,
@@ -480,6 +516,7 @@ public final class DebugBundleBrowserRelay {
         }
 
         public Config {
+            evidenceCapabilities = EvidenceProtocol.descriptor(evidenceCapabilities);
             endpoint = endpoint == null || endpoint.isBlank() ? "https://api.debugbundle.com/v1/events" : endpoint;
             projectMode = projectMode == null || projectMode.isBlank() ? "connected" : projectMode;
             localEventsDir = localEventsDir == null || localEventsDir.isBlank()
@@ -495,7 +532,14 @@ public final class DebugBundleBrowserRelay {
         }
     }
 
-    public record Request(String method, String contentType, String remoteAddr, HeaderLookup headerLookup) {
+    public record Request(String method, String contentType, String remoteAddr, HeaderLookup headerLookup, String queryString) {
+        public Request(String method, String contentType, String remoteAddr, HeaderLookup headers) {
+            this(method, contentType, remoteAddr, headers, null);
+        }
+        boolean discoversEvidence() {
+            return "1".equals(header("X-DebugBundle-Evidence")) || queryString != null
+                    && java.util.Arrays.stream(queryString.split("&")).anyMatch("debugbundle_evidence=1"::equals);
+        }
         public Request {
             method = method == null ? "GET" : method;
             headerLookup = headerLookup == null ? ignored -> null : headerLookup;
@@ -529,44 +573,9 @@ public final class DebugBundleBrowserRelay {
     }
 
     public static final class HttpRelayForwarder implements RelayForwarder {
-        private static final ObjectMapper FORWARD_OBJECT_MAPPER = new ObjectMapper();
-
-        private final Config config;
-        private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-
-        public HttpRelayForwarder(Config config) {
-            this.config = config == null ? new Config(null, null, null, null, 60, true, null, List.of()) : config;
-        }
-
-        @Override
-        public boolean forward(List<Map<String, Object>> acceptedEvents) {
-            if (acceptedEvents.isEmpty()) {
-                return true;
-            }
-            if (config.projectToken() == null || config.projectToken().isBlank()) {
-                return false;
-            }
-
-            try {
-                Map<String, Object> payload = new LinkedHashMap<>();
-                payload.put("events", acceptedEvents);
-
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(config.endpoint()))
-                        .timeout(Duration.ofSeconds(10))
-                        .header("Content-Type", "application/json")
-                        .header("Authorization", "Bearer " + config.projectToken())
-                        .POST(HttpRequest.BodyPublishers.ofString(FORWARD_OBJECT_MAPPER.writeValueAsString(payload)))
-                        .build();
-
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                return response.statusCode() >= 200 && response.statusCode() < 300;
-            } catch (IOException | InterruptedException | IllegalArgumentException error) {
-                if (error instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                return false;
-            }
-        }
+        private final RelayHttpForwarder delegate;
+        public HttpRelayForwarder(Config config) { delegate = new RelayHttpForwarder(config); }
+        @Override public boolean forward(List<Map<String, Object>> events) { return delegate.forward(events).success(); }
+        @Override public ForwardResult forwardVerified(List<Map<String, Object>> events) { return delegate.forward(events); }
     }
 }

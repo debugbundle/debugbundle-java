@@ -20,6 +20,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.Consumer;
 
 /** Owns finite, privacy-safe pending events and all blocking transport calls. */
 final class EventDeliveryWorker {
@@ -29,6 +30,9 @@ final class EventDeliveryWorker {
     private static final int MAX_FLUSH_WAITERS = 64;
 
     private final DebugBundleConfig config;
+    private final EvidenceDeliveryState evidence;
+    private final Consumer<Map<String, Object>> releaseEvidence;
+    private final Function<Map<String, Object>, Map<String, Object>> finalGate;
     private final DebugBundleTransport transport;
     private final Supplier<Long> clockMillis;
     private final Runnable beforeFlush;
@@ -68,6 +72,18 @@ final class EventDeliveryWorker {
             Function<Map<String, Object>, Map<String, Object>> finalizeEvent,
             BiFunction<Map<String, Object>, Throwable, Map<String, Object>> snapshotException
     ) {
+        this(config, transport, clockMillis, beforeFlush, pressureAggregate, finalizeEvent, snapshotException,
+                new EvidenceDeliveryState(config.evidenceCapabilities()), event -> { }, event -> event);
+    }
+
+    EventDeliveryWorker(DebugBundleConfig config, DebugBundleTransport transport, Supplier<Long> clockMillis,
+            Runnable beforeFlush, LongFunction<Map<String, Object>> pressureAggregate,
+            Function<Map<String, Object>, Map<String, Object>> finalizeEvent,
+            BiFunction<Map<String, Object>, Throwable, Map<String, Object>> snapshotException, EvidenceDeliveryState evidence,
+            Consumer<Map<String, Object>> releaseEvidence, Function<Map<String, Object>, Map<String, Object>> finalGate) {
+        this.finalGate = finalGate;
+        this.releaseEvidence = releaseEvidence;
+        this.evidence = evidence;
         this.config = config;
         this.transport = transport;
         this.clockMillis = clockMillis;
@@ -79,8 +95,8 @@ final class EventDeliveryWorker {
         executor.setRemoveOnCancelPolicy(true);
     }
 
-    void offer(Map<String, Object> event, boolean incidentPriority) {
-        offerInternal(event, true, incidentPriority || isHighPriority(event));
+    boolean offer(Map<String, Object> event, boolean incidentPriority) {
+        return offerInternal(event, true, incidentPriority || isHighPriority(event));
     }
 
     void offerException(Map<String, Object> shell, Throwable error) {
@@ -186,7 +202,9 @@ final class EventDeliveryWorker {
         if (!incomingHighPriority) return false;
         for (int index = inFlightCount; index < pending.size(); index++) {
             if (!pending.get(index).highPriority()) {
-                pendingBytes -= pending.remove(index).bytes();
+                PendingEvent removed = pending.remove(index);
+                pendingBytes -= removed.bytes();
+                releaseEvidence.accept(removed.event());
                 evictableLowPriorityCount--;
                 pressureDrops.incrementAndGet();
                 return true;
@@ -259,6 +277,7 @@ final class EventDeliveryWorker {
         if (!closed || !queueLock.tryLock()) return;
         try {
             cancelFlush();
+            pending.forEach(event -> releaseEvidence.accept(event.event()));
             pending.clear();
             pendingBytes = 0;
             evictableLowPriorityCount = 0;
@@ -344,6 +363,20 @@ final class EventDeliveryWorker {
             releaseQueueLock();
         }
 
+        if (transport instanceof HttpTransport) {
+            int count = IngestionWire.prefix(batch.stream().map(PendingEvent::event).toList());
+            queueLock.lock();
+            try {
+                if (closed) return;
+                for (int index = count; index < batch.size(); index++) {
+                    if (!batch.get(index).highPriority()) evictableLowPriorityCount++;
+                }
+                inFlightCount = count;
+                batch = batch.subList(0, count);
+                if (count == 0) { scheduleNextIfBuffered(); return; }
+            } finally { releaseQueueLock(); }
+        }
+
         TransportResponse response;
         try {
             response = transport.send(new EventBatchRequest(batch.stream().map(PendingEvent::event).toList()));
@@ -415,14 +448,18 @@ final class EventDeliveryWorker {
             // must not retain prior originals in addition to charged replacements.
             PendingEvent candidate = batch.set(index, null);
             if (closed) return;
-            if (candidate.finalized() || (snapshotsOnly && candidate.exception() == null)) continue;
+            if (snapshotsOnly && candidate.exception() == null) continue;
             Map<String, Object> output = candidate.exception() == null ? candidate.event() : snapshot(candidate);
-            if (!snapshotsOnly && output != null) {
+            if (!snapshotsOnly && !candidate.finalized() && output != null) {
                 try {
                     output = finalizeEvent.apply(output);
                 } catch (Throwable ignored) {
                     // Keep the already protected snapshot on hook failure.
                 }
+            }
+            if (!snapshotsOnly && output != null) {
+                output = finalGate.apply(evidence.filter(output, config.captureExceptionEvidence()));
+                if (transport instanceof HttpTransport) output = IngestionWire.fit(output);
             }
             int bytes = output == null ? 0 : estimateBytes(output);
             queueLock.lock();
@@ -439,6 +476,7 @@ final class EventDeliveryWorker {
                 }
                 pendingBytes -= candidate.bytes();
                 if (output == null || bytes > MAX_BYTES || pendingBytes + bytes > MAX_BYTES) {
+                    releaseEvidence.accept(output == null ? candidate.event() : output);
                     pending.remove(position);
                     inFlightCount--;
                     if (output != null) pressureDrops.incrementAndGet();
@@ -457,6 +495,8 @@ final class EventDeliveryWorker {
         IngestionAcknowledgementDecision acknowledgement = IngestionAcknowledgementDecision.decide(
                 response.body(), batch.size(), transport instanceof HttpTransport
         );
+        boolean lost = evidence.observeBody(response.body(), transport instanceof HttpTransport,
+                acknowledgement.kind() == IngestionAcknowledgementDecision.Kind.ACKNOWLEDGED);
         if (acknowledgement.kind() == IngestionAcknowledgementDecision.Kind.PROTOCOL_FAILURE) {
             markRetry(boundedRetryAfterMillis(response.retryAfterMillis()));
             return;
@@ -471,11 +511,20 @@ final class EventDeliveryWorker {
             return;
         }
 
-        List<PendingEvent> retryable = acknowledgement.retryableIndices().stream()
+        List<PendingEvent> retryable = new ArrayList<>(acknowledgement.retryableIndices().stream()
                 .filter(index -> index >= 0 && index < batch.size())
                 .map(batch::get)
-                .toList();
-        removeSent(batch.size());
+                .toList());
+        if (lost) for (var rejection : acknowledgement.terminalErrors()) {
+            if (!"invalid_event".equals(rejection.reason())) continue;
+            var original = batch.get(rejection.index());
+            if (!List.of("backend_exception", "frontend_exception").contains(original.event().get("event_type"))) continue;
+            var reduced = evidence.filter(original.event(), config.captureExceptionEvidence());
+            if (reduced != null && !reduced.equals(original.event())) {
+                retryable.add(new PendingEvent(reduced, estimateBytes(reduced), original.highPriority(), true, null));
+            }
+        }
+        removeSent(batch.size(), retryable);
         pending.addAll(0, retryable);
         for (PendingEvent event : retryable) {
             pendingBytes += event.bytes();
@@ -494,10 +543,13 @@ final class EventDeliveryWorker {
         scheduleNextIfBuffered();
     }
 
-    private void removeSent(int count) {
+    private void removeSent(int count) { removeSent(count, List.of()); }
+
+    private void removeSent(int count, List<PendingEvent> retained) {
         for (int index = 0; index < count; index++) {
             PendingEvent event = pending.get(index);
             pendingBytes -= event.bytes();
+            if (!retained.contains(event)) releaseEvidence.accept(event.event());
             if (index >= inFlightCount && !event.highPriority()) evictableLowPriorityCount--;
         }
         pending.subList(0, count).clear();
@@ -516,7 +568,8 @@ final class EventDeliveryWorker {
             cancelFlush();
         } else {
             firstBufferedAtMillis = now();
-            scheduleFlush(pending.size() >= config.batchSize() ? 1L : config.flushInterval().toMillis());
+            scheduleFlush(pending.size() >= config.batchSize()
+                    || transport instanceof HttpTransport && pending.get(0).finalized() ? 1L : config.flushInterval().toMillis());
         }
     }
 

@@ -16,11 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
@@ -38,15 +34,10 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     private final EventFactory eventFactory;
     private final EventSuppressionTracker suppressionTracker = new EventSuppressionTracker();
     private final Set<String> sensitiveFields;
-    private final RemoteConfigFetcher remoteConfigFetcher;
-    private final ScheduledExecutorService remoteConfigScheduler;
-    private final CompletableFuture<Void> initialConfigReady = new CompletableFuture<>();
     private final ThreadLocal<RequestScopeState> requestScopeState = new ThreadLocal<>();
-
-    private volatile RemoteConfigSnapshot remoteConfigSnapshot;
-    private volatile boolean remoteConfigFetchedOnce;
-    private String remoteConfigEtag;
-    private ScheduledFuture<?> remoteConfigPollTask;
+    private final EvidenceDeliveryState evidence;
+    private final RemoteConfigManager remote;
+    private final EvidenceController evidenceController;
 
 
     DefaultDebugBundleClient(DebugBundleConfig config) {
@@ -70,29 +61,16 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                         .map(value -> value.toLowerCase(Locale.ROOT))
                         .collect(java.util.stream.Collectors.toSet());
         this.eventFactory = new EventFactory(config, sensitiveFields, probeBuffers, this.clockMillis);
-        this.remoteConfigFetcher = config == null
-                ? null
-                : (config.remoteConfigFetcher() == null ? new HttpRemoteConfigFetcher() : config.remoteConfigFetcher());
-        this.remoteConfigScheduler = shouldPollRemoteConfig()
-                ? Executors.newSingleThreadScheduledExecutor(new DebugBundleThreadFactory("debugbundle-java-remote-config"))
-                : null;
+        this.evidence = new EvidenceDeliveryState(config == null ? null : config.evidenceCapabilities());
+        this.remote = new RemoteConfigManager(config, active, this.clockMillis, evidence);
+        this.evidenceController = new EvidenceController(config, evidence, new OperationContext(sensitiveFields),
+                () -> remote.remoteConfigSnapshot.capturePolicy(), this.clockMillis);
         this.delivery = active && resolvedTransport != null
                 ? new EventDeliveryWorker(config, resolvedTransport, this.clockMillis,
                         this::enqueueSuppressionAggregates, this::buildPressureAggregate,
-                        this::applyBeforeSendOnWorker, this::snapshotExceptionOnWorker)
+                        this::applyBeforeSendOnWorker, this::snapshotExceptionOnWorker, evidence, evidenceController::release, this::gateFinalEvent)
                 : null;
-        this.remoteConfigSnapshot = config == null
-                ? RemoteConfigSnapshot.balanced(60_000L)
-                : RemoteConfigSnapshot.balanced(config.probesPollInterval().toMillis());
-
-        if (shouldPollRemoteConfig()) {
-            remoteConfigScheduler.execute(() -> {
-                refreshRemoteConfigSafely();
-                initialConfigReady.complete(null);
-            });
-        } else {
-            initialConfigReady.complete(null);
-        }
+        remote.start();
     }
 
     @Override
@@ -107,18 +85,41 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     @Override
     public void captureException(Throwable error, Map<String, Object> context) {
+        captureExceptionInternal(error, context, false);
+    }
+
+    void captureFatalException(Throwable error, Map<String, Object> context) {
+        captureExceptionInternal(error, context, true);
+    }
+
+    private void captureExceptionInternal(Throwable error, Map<String, Object> context, boolean fatal) {
         if (!active || error == null || delivery == null || !delivery.tryReserve(true)) {
             return;
         }
 
         try {
-            RequestScopeState request = requestScopeState.get();
+            RequestScopeState request = currentRequest();
             if (!shouldSample()) return;
             Map<String, Object> shell = prepareEvent(eventFactory.buildExceptionShell(
                     error.getClass().getSimpleName(), mergedContext(context),
                     request == null ? List.of() : request.breadcrumbs().snapshot()
             ));
-            if (shell != null) delivery.offerException(shell, error);
+            if (shell != null) {
+                if (fatal) {
+                    @SuppressWarnings("unchecked")
+                    var fatalPayload = (Map<String, Object>) shell.get("payload");
+                    fatalPayload.put("handled", false);
+                }
+                if (config.captureExceptionEvidence() && evidence.supports("exception_evidence_v1")) {
+                    var execution = evidenceController.operations.execution();
+                    if (execution != null) {
+                        @SuppressWarnings("unchecked")
+                        var payload = (Map<String, Object>) shell.get("payload");
+                        payload.put("execution", execution);
+                    }
+                }
+                delivery.offerException(shell, error);
+            }
         } catch (Throwable ignored) {
             // Application exception accessors must not make SDK capture escape into the host.
         } finally {
@@ -148,7 +149,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             String boundedMessage = message.length() > MAX_CAPTURE_MESSAGE_CHARS ? OVERSIZED_MESSAGE : message;
             if (breadcrumb) {
                 if (boundedMessage.isBlank()) return;
-                requestScopeState.get().breadcrumbs().record(boundedMessage);
+                currentRequest().breadcrumbs().record(boundedMessage);
             }
             if (!standalone) return;
             if (delivery == null || !delivery.tryReserve(level == LogLevel.ERROR || level == LogLevel.CRITICAL)) return;
@@ -202,7 +203,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             String boundedMessage = message.length() > MAX_CAPTURE_MESSAGE_CHARS ? OVERSIZED_MESSAGE : message;
             if (breadcrumb) {
                 if (boundedMessage.isBlank()) return;
-                requestScopeState.get().breadcrumbs().record(boundedMessage);
+                currentRequest().breadcrumbs().record(boundedMessage);
             }
             if (!standalone) return;
             if (delivery == null || !delivery.tryReserve(effectiveLevel == LogLevel.ERROR
@@ -286,16 +287,18 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     public DebugBundleRequestScope beginRequest(Map<String, Object> request) {
         if (!active) return DebugBundleRequestScope.noop();
         try {
-            RequestScopeState previous = requestScopeState.get();
+            RequestScopeState previous = currentRequest();
             RequestScopeState current = new RequestScopeState(
                     previous,
                     buildRequestScopeContext(request),
                     TriggerTokenResolver.resolveRequestTriggerDirectives(
                             request == null ? Map.of() : request,
-                            remoteConfigSnapshot.triggerTokenKey(),
+                            remote.remoteConfigSnapshot.triggerTokenKey(),
                             now()
                     ),
-                    new InfoBreadcrumbRing(sensitiveFields, clockMillis)
+                    new InfoBreadcrumbRing(sensitiveFields, clockMillis),
+                    evidenceController.operations.begin(Map.of("kind", "request")),
+                    new java.util.concurrent.atomic.AtomicBoolean()
             );
             requestScopeState.set(current);
             return new DebugBundleRequestScope(current);
@@ -310,6 +313,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             return;
         }
 
+        state.ended().set(true);
+        if (state.operation() != null) state.operation().close();
         RequestScopeState current = requestScopeState.get();
         if (current != state) {
             return;
@@ -329,9 +334,9 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             return null;
         }
 
-        RequestScopeState captured = requestScopeState.get();
-        return () -> {
-            RequestScopeState previous = requestScopeState.get();
+        RequestScopeState captured = currentRequest();
+        return evidenceController.operations.decorate(() -> {
+            RequestScopeState previous = currentRequest();
             if (captured == null) {
                 requestScopeState.remove();
             } else {
@@ -346,7 +351,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     requestScopeState.set(previous);
                 }
             }
-        };
+        });
     }
 
     @Override
@@ -356,9 +361,9 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     @Override
     public void close() {
-        cancelRemoteConfigPoll();
+        remote.close();
         if (delivery != null) delivery.close();
-        if (remoteConfigScheduler != null) remoteConfigScheduler.shutdownNow();
+        evidenceController.close();
     }
 
     @Override
@@ -405,7 +410,13 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     ) {
         if (!active || delivery == null || !delivery.tryReserve(true)) return;
         try {
-            bufferPreparedEvent(eventFactory.buildReportedStackEvent(name, message, stack, safeContext, occurredAt));
+            var event = eventFactory.buildReportedStackEvent(name, message, stack, safeContext, occurredAt);
+            if (config.captureExceptionEvidence() && evidence.supports("exception_evidence_v1")) {
+                @SuppressWarnings("unchecked")
+                var payload = (Map<String, Object>) event.get("payload");
+                payload.put("exception_evidence", ReportedExceptionEvidence.capture(name, message, stack));
+            }
+            bufferPreparedEvent(event);
         } catch (Throwable ignored) {
             // Redirected stderr content must not escape the SDK worker.
         } finally {
@@ -414,11 +425,11 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     void refreshRemoteConfigNow() {
-        refreshRemoteConfigSafely();
+        remote.refresh();
     }
 
     CompletableFuture<Void> initialConfigReady() {
-        return initialConfigReady;
+        return remote.initialConfigReady;
     }
 
     private void bufferPreparedEvent(Map<String, Object> event) {
@@ -433,21 +444,33 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private Map<String, Object> snapshotExceptionOnWorker(Map<String, Object> shell, Throwable error) {
-        Map<String, Object> event = prepareEvent(eventFactory.completeExceptionEvent(shell, error));
+        Map<String, Object> event = prepareEvent(eventFactory.completeExceptionEvent(shell, error, config.captureExceptionEvidence() && evidence.supports("exception_evidence_v1")));
         if (event == null) return null;
         String key = SuppressionKeyBuilder.build(event);
         return key == null || suppressionTracker.shouldCapture(key, now()) ? event : null;
     }
 
     private Map<String, Object> applyBeforeSendOnWorker(Map<String, Object> safeEvent) {
-        Map<String, Object> prepared = BeforeSendProcessor.apply(safeEvent, config.beforeSend());
-        if (prepared == null) return null;
-        Map<String, Object> protectedReplacement = protectEvent(prepared);
-        return protectedReplacement == null ? safeEvent : protectedReplacement;
+        boolean fatal = safeEvent.get("payload") instanceof Map<?, ?> payload && Boolean.FALSE.equals(payload.get("handled"));
+        Map<String, Object> prepared = fatal ? safeEvent : BeforeSendProcessor.apply(safeEvent, config.beforeSend());
+        if (prepared == null) { evidenceController.release(safeEvent); return null; }
+        // A valid replacement may remove application-private fields. Privacy
+        // failure must withhold it, never restore the pre-hook event.
+        return evidenceController.reconcile(safeEvent, protectEvent(prepared));
+    }
+
+    private Map<String, Object> protectEvent(Map<String, Object> event) {
+        if (event == null) return null;
+        Map<String, Object> safe = protectOnce(event);
+        if (safe != null) return safe;
+        Map<String, Object> reduced = IngestionWire.withoutOptional(event, true);
+        if (reduced == null) return null;
+        safe = protectOnce(reduced);
+        return safe != null ? safe : protectOnce(IngestionWire.withoutOptional(event, false));
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> protectEvent(Map<String, Object> event) {
+    private Map<String, Object> protectOnce(Map<String, Object> event) {
         try {
             Map<String, Object> identity = new LinkedHashMap<>(event);
             // Correlation is application data: scrub it, while rejecting unsafe SDK identity fields.
@@ -460,6 +483,23 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         } catch (RuntimeException ignored) {
             return null;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> gateFinalEvent(Map<String, Object> event) {
+        event = evidenceController.filterPolicy(event);
+        if (event == null || !evidenceController.eligible(event)) return null;
+        var payload = (Map<String, Object>) event.get("payload");
+        String type = (String) event.get("event_type");
+        if ("log_event".equals(type) && !shouldCaptureLog(LogLevel.fromName((String) payload.get("level")))) return null;
+        if ("request_event".equals(type) && !RequestCapturePolicy.shouldCapture(
+                ((Number) payload.get("response_status")).intValue(), (String) payload.get("path"),
+                (String) payload.get("method"), remote.remoteConfigSnapshot.capturePolicy())) return null;
+        if ("frontend_breadcrumb".equals(type) && remote.remoteConfigSnapshot.capturePolicy().captureBreadcrumbs()
+                != CapturePolicy.CaptureBreadcrumbsMode.STANDALONE) return null;
+        if ("probe_event".equals(type) && remote.remoteConfigSnapshot.capturePolicy().captureProbeEvents()
+                != CapturePolicy.CaptureProbeEventsMode.STANDALONE_WHEN_ACTIVATED) return null;
+        return event;
     }
 
     private void bufferEvent(Map<String, Object> event) {
@@ -505,122 +545,6 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         }
     }
 
-    private synchronized void refreshRemoteConfig() {
-        if (!shouldPollRemoteConfig() || remoteConfigFetcher == null || config == null) {
-            return;
-        }
-
-        RemoteConfigResponse response;
-        try {
-            response = remoteConfigFetcher.fetch(new RemoteConfigRequest(
-                    RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint()),
-                    config.projectToken(),
-                    "@debugbundle/sdk-java",
-                    "3.0.1",
-                    remoteConfigEtag,
-                    config.requestTimeout()
-            ));
-        } catch (Throwable error) {
-            applyMinimalPolicyFallbackIfNeeded();
-            scheduleRemoteConfigPoll(config.probesPollInterval().toMillis());
-            return;
-        }
-
-        if (response.etag() != null && !response.etag().isBlank()) {
-            remoteConfigEtag = response.etag();
-        }
-
-        if (response.statusCode() == 304) {
-            pruneExpiredRemoteProbeDirectives();
-            if (remoteConfigSnapshot.remoteProbesEnabled()) {
-                scheduleRemoteConfigPoll(remoteConfigSnapshot.pollIntervalMillis());
-            } else {
-                cancelRemoteConfigPoll();
-            }
-            return;
-        }
-
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            applyMinimalPolicyFallbackIfNeeded();
-            scheduleRemoteConfigPoll(config.probesPollInterval().toMillis());
-            return;
-        }
-
-        RemoteConfigSnapshot parsed = RemoteConfigParser.parse(
-                response.responseBody(),
-                config.probesPollInterval().toMillis(),
-                now()
-        );
-        if (parsed == null) {
-            applyMinimalPolicyFallbackIfNeeded();
-            scheduleRemoteConfigPoll(config.probesPollInterval().toMillis());
-            return;
-        }
-
-        remoteConfigSnapshot = parsed;
-        remoteConfigFetchedOnce = true;
-        if (parsed.remoteProbesEnabled()) {
-            scheduleRemoteConfigPoll(parsed.pollIntervalMillis());
-        } else {
-            cancelRemoteConfigPoll();
-        }
-    }
-
-    private void applyMinimalPolicyFallbackIfNeeded() {
-        if (!remoteConfigFetchedOnce && config != null) {
-            remoteConfigSnapshot = RemoteConfigSnapshot.minimal(config.probesPollInterval().toMillis());
-        }
-    }
-
-    private void pruneExpiredRemoteProbeDirectives() {
-        long nowMillis = now();
-        List<RemoteProbeDirective> activeDirectives = remoteConfigSnapshot.directives().stream()
-                .filter(directive -> {
-                    try {
-                        return Instant.parse(directive.expiresAt()).toEpochMilli() > nowMillis;
-                    } catch (RuntimeException error) {
-                        return false;
-                    }
-                })
-                .toList();
-
-        remoteConfigSnapshot = new RemoteConfigSnapshot(
-                remoteConfigSnapshot.probesEnabled(),
-                remoteConfigSnapshot.remoteProbesEnabled(),
-                activeDirectives,
-                remoteConfigSnapshot.pollIntervalMillis(),
-                remoteConfigSnapshot.triggerTokenKey(),
-                remoteConfigSnapshot.capturePolicy()
-        );
-    }
-
-    private void scheduleRemoteConfigPoll(long delayMillis) {
-        if (!shouldPollRemoteConfig() || remoteConfigScheduler == null || !remoteConfigSnapshot.remoteProbesEnabled()) {
-            return;
-        }
-
-        if (remoteConfigPollTask != null) {
-            remoteConfigPollTask.cancel(false);
-        }
-
-        long safeDelayMillis = Math.max(1_000L, delayMillis);
-        remoteConfigPollTask = remoteConfigScheduler.schedule(this::refreshRemoteConfigSafely, safeDelayMillis, TimeUnit.MILLISECONDS);
-    }
-
-    private void cancelRemoteConfigPoll() {
-        if (remoteConfigPollTask != null) {
-            remoteConfigPollTask.cancel(false);
-            remoteConfigPollTask = null;
-        }
-    }
-
-    private void refreshRemoteConfigSafely() {
-        try {
-            refreshRemoteConfig();
-        } catch (Throwable ignored) {
-        }
-    }
-
     private boolean shouldSample() {
         if (config.sampleRate() >= 1.0d) {
             return true;
@@ -635,7 +559,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         if (!active || level == null) {
             return false;
         }
-        CapturePolicy.CaptureLogsMode policyMode = remoteConfigSnapshot.capturePolicy().captureLogs();
+        CapturePolicy.CaptureLogsMode policyMode = remote.remoteConfigSnapshot.capturePolicy().captureLogs();
         if (policyMode == CapturePolicy.CaptureLogsMode.OFF) {
             return false;
         }
@@ -652,8 +576,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     private boolean shouldCaptureInfoBreadcrumb(LogLevel level) {
         return active && level == LogLevel.INFO && config.infoBreadcrumbs()
-                && requestScopeState.get() != null
-                && remoteConfigSnapshot.capturePolicy().captureBreadcrumbs()
+                && currentRequest() != null
+                && remote.remoteConfigSnapshot.capturePolicy().captureBreadcrumbs()
                 != CapturePolicy.CaptureBreadcrumbsMode.LOCAL_ONLY;
     }
 
@@ -670,7 +594,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             requestPath = firstNonBlank(asString(requestMap.get("path")), asString(requestMap.get("url")));
             httpMethod = asString(requestMap.get("method"));
         }
-        CapturePolicy policy = remoteConfigSnapshot.capturePolicy();
+        CapturePolicy policy = remote.remoteConfigSnapshot.capturePolicy();
         return new RequestCaptureDecision(
                 RequestCapturePolicy.shouldCapture(statusCode, requestPath, httpMethod, policy),
                 statusCode != null && RequestCapturePolicy.isImmediateRequestIncidentStatus(
@@ -697,7 +621,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     )
             );
             if (event != null
-                    && remoteConfigSnapshot.capturePolicy().captureProbeEvents()
+                    && remote.remoteConfigSnapshot.capturePolicy().captureProbeEvents()
                     == CapturePolicy.CaptureProbeEventsMode.STANDALONE_WHEN_ACTIVATED) {
                 offerPreparedEvent(event);
             }
@@ -705,18 +629,18 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private ProbeCaptureDecision getMatchingRemoteProbeDecision(String label, long nowMillis) {
-        if (!remoteConfigSnapshot.probesEnabled()) {
+        if (!remote.remoteConfigSnapshot.probesEnabled()) {
             return new ProbeCaptureDecision(false, List.of());
         }
 
-        pruneExpiredRemoteProbeDirectives();
+        remote.pruneExpiredRemoteProbeDirectives();
         List<RemoteProbeDirective> directives = new ArrayList<>();
-        RequestScopeState requestState = requestScopeState.get();
+        RequestScopeState requestState = currentRequest();
         if (requestState != null) {
             directives.addAll(requestState.directives());
         }
-        if (remoteConfigSnapshot.remoteProbesEnabled()) {
-            for (RemoteProbeDirective directive : remoteConfigSnapshot.directives()) {
+        if (remote.remoteConfigSnapshot.remoteProbesEnabled()) {
+            for (RemoteProbeDirective directive : remote.remoteConfigSnapshot.directives()) {
                 if (matchesDirective(directive, label, nowMillis)) {
                     directives.add(directive);
                 }
@@ -760,19 +684,19 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private boolean probesEnabled() {
-        return !remoteConfigFetchedOnce || remoteConfigSnapshot.probesEnabled();
+        return !remote.remoteConfigFetchedOnce || remote.remoteConfigSnapshot.probesEnabled();
     }
 
     private Map<String, Object> mergedContext(Map<String, Object> eventContext) {
         Map<String, Object> context = new LinkedHashMap<>(persistentContext);
-        RequestScopeState requestState = requestScopeState.get();
+        RequestScopeState requestState = currentRequest();
         if (requestState != null) {
             context.putAll(requestState.context());
         }
         if (eventContext != null) {
             context.putAll(eventContext);
         }
-        return context;
+        return evidenceController.context(context);
     }
 
     private int logLevelWeight(LogLevel level) {
@@ -792,13 +716,6 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             case ERROR -> 40;
             case OFF -> Integer.MAX_VALUE;
         };
-    }
-
-    private boolean shouldPollRemoteConfig() {
-        return active
-                && config != null
-                && !"local-only".equals(normalize(config.projectMode()))
-                && !TransportFactory.isLocalEnvironment(config.environment());
     }
 
     private boolean hasProjectToken(DebugBundleConfig candidate) {
@@ -827,11 +744,41 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             List<RemoteProbeDirective> directives
     ) {}
 
+    private RequestScopeState currentRequest() {
+        RequestScopeState value = requestScopeState.get();
+        // Legacy correlation snapshots may outlive a request in decorated tasks.
+        // New execution ownership is separately revoked by OperationContext.
+        return value;
+    }
+
+    @Override
+    public <T> T runWithOperationContext(Map<String, Object> options, Supplier<T> action) {
+        return evidenceController.operations.run(options, action);
+    }
+
+    @Override
+    public void captureRecovery(Map<String, Object> observation) {
+        if (!active || delivery == null || !evidenceController.allowsRecovery() || !delivery.tryReserve(false)) return;
+        Map<String, Object> event = null;
+        try {
+            if (!shouldSample()) return;
+            var payload = evidenceController.recoveryPayload(observation);
+            if (payload == null) return;
+            event = prepareEvent(eventFactory.buildDiagnosticEvent(payload, mergedContext(Map.of())));
+            if (event == null || !evidenceController.reserve(event)) return;
+            if (!delivery.offer(event, false)) evidenceController.release(event);
+        } catch (Throwable ignored) {
+            evidenceController.release(event);
+        } finally { delivery.releaseReservation(); }
+    }
+
     private record RequestScopeState(
             RequestScopeState previous,
             Map<String, Object> context,
             List<RemoteProbeDirective> directives,
-            InfoBreadcrumbRing breadcrumbs
+            InfoBreadcrumbRing breadcrumbs,
+            OperationContext.Lease operation,
+            java.util.concurrent.atomic.AtomicBoolean ended
     ) {
         private RequestScopeState {
             context = Map.copyOf(context);

@@ -2,6 +2,14 @@
 
 Java SDK, servlet adapters, and Spring Boot starter for DebugBundle.
 
+`make evidence-performance` compares identical exception/recovery calls with
+evidence disabled and enabled, including a full warning queue. It measures capture
+caller time/allocation and the existing SDK worker's CPU/allocation separately,
+checks native cause preservation, original-error priority and retained-byte
+ceilings, and excludes setup/network/cleanup. The synthetic client uses local-only
+mode with an in-memory transport; JVM allocation counters are required. Existing
+capture-safety timing tests remain part of `make verify`.
+
 ![Maven Central](https://img.shields.io/maven-central/v/com.debugbundle/debugbundle-java-core?label=maven)
 ![CI](https://img.shields.io/github/actions/workflow/status/debugbundle/debugbundle-java/ci.yml?branch=main&label=ci)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -10,9 +18,74 @@ Use this repository to capture Java backend exceptions, request metadata, Logbac
 
 Requires Java 17 or newer.
 
+The Java26/27 Docker lanes copy the same pinned Maven 3.9.11 distribution into their native JDK images; they do not reinstall Maven through apt/dnf on each run. An explicit `MAVEN_IMAGE` override remains respected.
+
+The installed smoke runs in a separate JVM using the [Maven external-process runner](https://www.mojohaus.org/exec-maven-plugin/examples/example-exec-for-java-programs.html), so native uncaught handlers are exercised without Maven thread-group interception.
+
 Version 3.0 snapshots exceptions on its existing background worker through bounded weak references, preserving original stacks when the input is still reachable. Collected inputs have an explicit unavailable-details fallback. See [snapshot ownership and shutdown limits](MIGRATION-3.0.md#exception-snapshots-and-ownership).
 
-The installation examples below use the `3.0.1` release line. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
+The installation examples below target the **unpublished 3.1.0 source candidate**. Runtime and release qualification is still in progress. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
+
+## Evidence candidate
+
+New evidence uses the existing config and ingestion requests for capability discovery.
+Unknown or older destinations keep the ordinary event shape. `captureExceptionEvidence`
+defaults to true; `captureRecoveryObservations` defaults to false. A builder
+`evidenceCapabilities(Map.of("version", 1, "features", ...))` pin asserts a verified
+**complete** delivery and reader path, including relays and local processing.
+Later discovery can revoke it; a pin does not override capture policy or privacy.
+
+```java
+client.runWithOperationContext(Map.of("kind", "job", "name", "queue.process", "limitMs", 1000), () -> {
+    String failure = UUID.randomUUID().toString();
+    String attempt = UUID.randomUUID().toString();
+    client.captureException(new IllegalStateException("fictional fixture"), Map.of("failureRef", failure));
+    client.captureRecovery(Map.of("failureRef", failure, "attemptId", attempt, "state", "attempt_started"));
+    // Report recovery_observed only after the application verifies its semantic outcome.
+    return null;
+});
+```
+
+`captureRecovery` accepts `failureRef`, `attemptId`, `state`, optional
+`evidenceScope`, `operation`, `statusCode` and `durationMs`. States are
+`attempt_started`, `attempt_completed`, `attempt_failed`, `recovery_observed`
+and `failure_persisted`. HTTP 200 and `attempt_completed` leave semantic recovery
+unknown. Without an active operation, supply an explicit fresh operation/page
+scope. IDs must be independently generated UUID v4 values. Capture return types
+are unchanged. Operation callbacks preserve application results and exceptions;
+elapsed time is monotonic, and a configured limit is not remaining time.
+Completed request/operation owners revoke execution and automatic diagnostic
+scope in decorated continuations. Existing decorated request correlation remains
+available for compatibility.
+
+Graphs retain native causes, suppressed exceptions and frames on the existing
+single delivery worker. They exclude locals, arguments and object dumps. A native
+JVM accessor may allocate a stack/suppressed array before SDK retention bounds
+apply; overridden accessors can stall that same worker, never capture callers.
+Redirected stderr evidence parses retained text and is labelled `runtime_reported`.
+Uncaught native evidence bypasses application hooks and uses at most two nodes,
+eight frames per node and 4 KiB of optional metadata. Delivery at process exit,
+OOM and VM termination is best effort; no new shutdown wait is introduced.
+
+Java does not collect browser timing or CSP observations. Its maintained browser
+relays preserve those closed DTOs, validate privacy, attach server identity and
+intersect downstream proof. Opted-in requests receive additive `evidence_errors`
+and `evidence_capabilities`; legacy response text/status remains compatible.
+Native forwarding requires complete chunk-local ACKs before a spool completion
+marker is created. Legacy custom boolean forwarders remain accepted but leave
+the spool pending; implement `forwardVerified` only with complete acceptance proof.
+Spring, Jakarta/Javax servlet and JAX-RS request owners use the same core lease.
+
+Config loader/agent properties support `debugbundle.capture-exception-evidence`,
+`debugbundle.capture-recovery-observations`, and `debugbundle.evidence-capabilities`
+(a descriptor JSON string), with corresponding `DEBUGBUNDLE_*` environment names.
+Spring binds the same properties, with a descriptor map for `evidence-capabilities`.
+Review custom redaction hooks for the new graph/observation fields before adoption,
+or disable capture. A canonical hook may change any allowed field, including IDs
+and type; failed validation budgets or valid unfit replacements are withheld.
+Native HTTP uses actual UTF-8 request byte limits and bounded identity-encoded
+ACKs. The existing request timeout covers streaming replies; cancellation of
+native DNS/connect work remains subject to JVM HTTP implementation behaviour.
 
 ## Modules
 
@@ -35,12 +108,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:3.0.1")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:3.1.0")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -49,7 +122,7 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
@@ -59,7 +132,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-jakarta</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
@@ -67,7 +140,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-javax</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
@@ -77,7 +150,7 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
@@ -85,14 +158,14 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-javax</artifactId>
-  <version>3.0.1</version>
+  <version>3.1.0</version>
 </dependency>
 ```
 
 App-server operators that prefer JVM startup injection can add the bootstrap agent:
 
 ```text
--javaagent:/opt/debugbundle/debugbundle-java-agent-3.0.1.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
+-javaagent:/opt/debugbundle/debugbundle-java-agent-3.1.0.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
@@ -103,7 +176,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>3.0.1</version>
+      <version>3.1.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -113,7 +186,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
 
 ```kotlin
 dependencies {
-  implementation(platform("com.debugbundle:debugbundle-java-parent:3.0.1"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:3.1.0"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
 }
@@ -419,3 +492,22 @@ Apache-2.0. See `LICENSE`.
 The built-in HTTP transport requires the canonical ingestion acknowledgement (`accepted`, `rejected`, and `errors`). Empty responses, unrelated JSON, malformed counts, or invalid rejection indices retain the full batch with backoff. Valid acknowledgements remove accepted and terminally rejected events and retry only the indexed retryable rejections; an all-rejected batch does not advance `lastEventAt`.
 
 File transports and explicitly supplied custom/legacy transports retain their documented bodyless success fallback. A custom transport that returns acknowledgement fields must return the complete canonical shape. Retry hints (delay seconds or HTTP dates) are bounded to five minutes and measured from response receipt, including partial/protocol acknowledgements and retryable server failures. Without a server hint, existing retry timing is preserved. Failures remain contained within the SDK's existing delivery path.
+
+## Probe checkpoint guidance
+
+Application instrumentation supplies probe labels and bounded data. Deploy a new
+checkpoint before activating it. Remote activation affects future matching calls
+when policy permits; it does not inject code or recover unretained measurements.
+Built-in runtime/error/device collectors keep their documented SDK settings.
+
+Use fixed labels and allowlisted technical states: `media.preview.checkpoint`
+(stage/input kind/attempt), `auth.session.checkpoint` (observed session presence
+and result), `job.dependency.checkpoint` (named dependency/attempt/result), or
+`cache.preview.checkpoint` (hit/miss/coarse age bucket). Omit customer identifiers,
+tokens/cookies, cache keys, URLs and raw payloads. HTTP 200 or attempt completion
+alone does not establish semantic recovery.
+
+Empty probe data means no matching retained observation for the selected sample
+window. It does not confirm activation delivery to every SDK or execution of a
+label. Check the deployed SDK/wrapper version, instrumentation, scope, expiry,
+policy, sampling and delivery receipts. See the [probe recipes](https://debugbundle.com/docs/probes#bounded-checkpoint-recipes).

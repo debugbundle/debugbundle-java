@@ -8,6 +8,52 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class BeforeSendProcessorValidationTest {
+    @org.junit.jupiter.api.Test
+    void rejectsIncompleteNestedBackendEnvelope() {
+        Map<String, Object> event = new java.util.LinkedHashMap<>();
+        event.put("schema_version", "2026-03-01");
+        event.put("event_id", "00000000-0000-4000-8000-000000000001");
+        event.put("event_type", "backend_exception");
+        event.put("occurred_at", "2026-10-26T00:00:00Z");
+        event.put("sdk_name", "@debugbundle/sdk-java");
+        event.put("sdk_version", "candidate");
+        event.put("service", Map.of("name", "test", "environment", "test"));
+        event.put("payload", Map.of("name", "Error", "message", "safe", "stack", "trace", "handled", true,
+                "request", Map.of(), "response", Map.of(), "runtime", Map.of("version", "17")));
+        org.assertj.core.api.Assertions.assertThat(BeforeSendProcessor.isValid(event)).isFalse();
+    }
+
+    @Test
+    void ownsValidHookResultsAndWithholdsUnavailableOrExhaustedValidation() {
+        Map<String, Object> original = event("log_event", validLogPayload());
+        Map<String, Object> replacement = event("log_event", validLogPayload());
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("value", "accepted");
+        replacement.put("context", nested);
+        Map<String, Object> accepted = BeforeSendProcessor.apply(original, ignored -> replacement);
+        assertThat(accepted).isNotNull().isNotSameAs(replacement);
+        nested.put("value", "later mutation");
+        assertThat(accepted.get("context")).isEqualTo(Map.of("value", "accepted"));
+        replacement.put("context", java.util.Collections.unmodifiableMap(Map.of("value", "read-only")));
+        assertThat(BeforeSendProcessor.apply(original, ignored -> java.util.Collections.unmodifiableMap(replacement)))
+                .isNotNull().isNotSameAs(original);
+
+        java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        Map<String, Object> foreign = new LinkedHashMap<>() {
+            @Override
+            public java.util.Set<Map.Entry<String, Object>> entrySet() {
+                callbacks.incrementAndGet();
+                throw new AssertionError("foreign iterator must not execute");
+            }
+        };
+        replacement.put("context", foreign);
+        assertThat(BeforeSendProcessor.apply(original, ignored -> replacement)).isNull();
+        assertThat(callbacks).hasValue(0);
+
+        replacement.put("context", Map.of("detail", "x".repeat(9 * 1024 * 1024)));
+        assertThat(BeforeSendProcessor.apply(original, ignored -> replacement) == null).isTrue();
+    }
+
     @Test
     void acceptsEveryContractEventShape() {
         assertAccepted("backend_exception", map(
@@ -15,10 +61,10 @@ class BeforeSendProcessorValidationTest {
                 "message", "failed",
                 "stack", "stack",
                 "handled", true,
-                "request", Map.of(),
-                "response", Map.of(),
+                "request", Map.of("method", "GET", "path", "/", "query", Map.of(), "headers", Map.of()),
+                "response", Map.of("status_code", 500),
                 "runtime", validRuntime(),
-                "probe_data", Map.of()
+                "probe_data", Map.of("version", 1, "items", List.of())
         ));
         assertAccepted("request_event", map(
                 "method", "GET",
@@ -35,15 +81,16 @@ class BeforeSendProcessorValidationTest {
                 "attributes", Map.of()
         ));
         assertAccepted("frontend_breadcrumb", map(
-                "breadcrumb_type", "navigation",
+                "breadcrumb_type", "route_change",
                 "data", Map.of()
         ));
         assertAccepted("frontend_exception", map(
                 "name", "TypeError",
                 "message", "failed",
                 "stack", "stack",
+                "browser", Map.of("name", "fixture", "version", "1"),
                 "breadcrumbs", List.of(),
-                "probe_data", Map.of()
+                "probe_data", Map.of("version", 1, "items", List.of())
         ));
         assertAccepted("deploy_metadata", map(
                 "commit_sha", "abc123",

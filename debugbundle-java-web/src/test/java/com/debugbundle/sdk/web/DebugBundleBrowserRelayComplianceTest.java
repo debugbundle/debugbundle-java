@@ -348,6 +348,12 @@ class DebugBundleBrowserRelayComplianceTest {
         private final List<List<Map<String, Object>>> forwardedBatches = new ArrayList<>();
 
         @Override
+        public DebugBundleBrowserRelay.ForwardResult forwardVerified(List<Map<String, Object>> events) {
+            return new DebugBundleBrowserRelay.ForwardResult(forward(events), true,
+                    com.debugbundle.sdk.EvidenceProtocol.descriptor(null));
+        }
+
+        @Override
         public boolean forward(List<Map<String, Object>> acceptedEvents) {
             List<Map<String, Object>> copiedBatch = new ArrayList<>();
             for (Map<String, Object> acceptedEvent : acceptedEvents) {

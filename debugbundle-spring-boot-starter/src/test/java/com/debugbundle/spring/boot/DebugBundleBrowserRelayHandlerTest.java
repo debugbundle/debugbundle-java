@@ -194,7 +194,7 @@ class DebugBundleBrowserRelayHandlerTest {
     }
 
     @Test
-    void connectedDurableRelayWritesSpoolAndMarksDeliveredOnForwardSuccess(@TempDir Path tempDir) throws Exception {
+    void connectedDurableRelayKeepsSpoolPendingOnLegacyForwardSuccess(@TempDir Path tempDir) throws Exception {
         DebugBundleProperties properties = properties(tempDir.resolve("local"));
         properties.setProjectMode("connected");
         properties.getRelay().setSpoolDir(tempDir.resolve("spool").toString());
@@ -210,7 +210,7 @@ class DebugBundleBrowserRelayHandlerTest {
         try (var files = Files.list(tempDir.resolve("spool"))) {
             List<Path> writtenFiles = files.toList();
             assertThat(writtenFiles).anyMatch(path -> path.getFileName().toString().endsWith(".events.json"));
-            assertThat(writtenFiles).anyMatch(path -> path.getFileName().toString().endsWith(".delivered"));
+            assertThat(writtenFiles).noneMatch(path -> path.getFileName().toString().endsWith(".delivered"));
         }
     }
 

@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
 ## [3.1.1] - 2026-11-06
 
 - Read duplicate-capture metadata from the protected SDK snapshot, preserving primary exceptions without invoking application-defined map accessors.

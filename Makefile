@@ -48,7 +48,7 @@ coverage-only: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) clean test org.jacoco:jacoco-maven-plugin:0.8.15:report@write-coverage-report org.jacoco:jacoco-maven-plugin:0.8.15:check@enforce-source-file-coverage
 
 artifact-network-check: maven-runtime-image
-	$(MAVEN_RUN) sh -lc 'curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 https://repo.maven.apache.org/maven2/org/apache/maven/shared/file-management/3.1.1/file-management-3.1.1.pom'
+	$(MAVEN_RUN) sh -lc 'curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 https://repo.maven.apache.org/maven2/org/apache/maven/shared/file-management/3.1.0/file-management-3.1.0.pom'
 
 artifact-resolution-check: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -U -e -DskipTests -pl debugbundle-java-core -am package

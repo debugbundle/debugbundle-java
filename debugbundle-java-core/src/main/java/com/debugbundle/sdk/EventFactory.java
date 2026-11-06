@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 final class EventFactory {
     private static final String SCHEMA_VERSION = "2026-03-01";
     private static final String SDK_NAME = "@debugbundle/sdk-java";
-    private static final String SDK_VERSION = "3.1.0";
+    private static final String SDK_VERSION = "3.1.1";
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
@@ -113,7 +113,10 @@ final class EventFactory {
         payload.put("message", message);
         payload.put("stack", stack);
         payload.put("handled", true);
-        payload.put("runtime", RuntimeFacts.capture());
+        // Stack-pressure fallback can run on a logger caller. DNS/host discovery
+        // belongs to the native exception worker, never this bounded text path.
+        payload.put("runtime", Map.of("version", System.getProperty("java.version", "unknown"),
+                "thread_id", inputContext.getOrDefault("thread_id", Thread.currentThread().getId())));
         Map<String, Object> request = extractMap(inputContext, "request");
         payload.put("request", redact(requestPayload(request.isEmpty() ? inputContext : request)));
         Map<String, Object> response = extractMap(inputContext, "response");

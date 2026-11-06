@@ -1,5 +1,7 @@
 # debugbundle-java
 
+Patch 3.1.1 corrects native logger exception evidence and capture safety while preserving public APIs and event schemas. Upgrade the DebugBundle distribution to adopt the correction.
+
 Java SDK, servlet adapters, and Spring Boot starter for DebugBundle.
 
 `make evidence-performance` compares identical exception/recovery calls with
@@ -108,12 +110,12 @@ Spring Boot applications should install the starter:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:3.1.0")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:3.1.1")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -122,7 +124,7 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
@@ -132,7 +134,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-jakarta</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
@@ -140,7 +142,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-javax</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
@@ -150,7 +152,7 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
@@ -158,14 +160,14 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-javax</artifactId>
-  <version>3.1.0</version>
+  <version>3.1.1</version>
 </dependency>
 ```
 
 App-server operators that prefer JVM startup injection can add the bootstrap agent:
 
 ```text
--javaagent:/opt/debugbundle/debugbundle-java-agent-3.1.0.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
+-javaagent:/opt/debugbundle/debugbundle-java-agent-3.1.1.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
@@ -176,7 +178,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>3.1.0</version>
+      <version>3.1.1</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -186,7 +188,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
 
 ```kotlin
 dependencies {
-  implementation(platform("com.debugbundle:debugbundle-java-parent:3.1.0"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:3.1.1"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
 }
@@ -468,7 +470,7 @@ make verify JAVA_VERSION=17
 make verify JAVA_VERSION=26
 ```
 
-Supported validation lanes are Java 17, Java 21, Java 25, and Java 26.
+Supported validation lanes are Java 17, Java 21, Java 25, Java 26, and Java 27.
 
 ## Release
 

@@ -10,6 +10,21 @@ import org.junit.jupiter.api.Test;
 
 class ExceptionEvidenceTest {
     @Test
+    void redirectedGraphRetainsCauseAndSuppressedRawFramesAndCustomRelations() {
+        var writer = new java.io.StringWriter();
+        RedirectedStderrTest.failure().printStackTrace(new java.io.PrintWriter(writer));
+        var graph = ReportedExceptionEvidence.capture("ExecutionException", "synthetic failure", writer.toString());
+        assertThat(graph.toString()).contains("SyntheticService.load", "SyntheticService.java:42", "cause", "suppressed", "Resource.close");
+        assertThat((List<?>) graph.get("nodes")).hasSize(3);
+        var bounded = ReportedExceptionEvidence.capture("RootException", "root", "RootException: root\n"
+                + "Caused by: example.CustomFailure: inner\n\tat module-name@1/app.Throw.run(Throw.java:42)\n"
+                + "\t... 2 more\n\t[CIRCULAR REFERENCE: example.CustomFailure: inner]\n"
+                + "Caused by: example.DeeperFailure: deeper\n".repeat(12));
+        assertThat(bounded.get("truncated")).isEqualTo(true);
+        assertThat(bounded.toString()).contains("Throw.java:42", "... 2 more", "CIRCULAR REFERENCE");
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void capturesNativeCausesSuppressedAndFramesOnlyWithOptInAndProof() throws Exception {
         FakeTransport transport = new FakeTransport();

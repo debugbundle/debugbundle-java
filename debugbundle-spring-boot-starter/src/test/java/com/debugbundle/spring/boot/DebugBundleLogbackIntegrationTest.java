@@ -50,8 +50,9 @@ class DebugBundleLogbackIntegrationTest {
                         MDC.clear();
                     }
 
-                    assertThat(client.logs()).hasSize(1);
-                    CapturedLog captured = client.logs().get(0);
+                    assertThat(client.logs()).isEmpty();
+                    assertThat(client.exceptions).hasSize(1);
+                    CapturedLog captured = client.exceptions.get(0);
                     assertThat(captured.message()).isEqualTo("payment failed");
                     assertThat(captured.level()).isEqualTo(LogLevel.ERROR);
                     assertThat(captured.context()).containsEntry("logger", "checkout.logback");
@@ -59,13 +60,7 @@ class DebugBundleLogbackIntegrationTest {
                     assertThat(captured.context().get("mdc"))
                             .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
                             .containsEntry("requestId", "req-123");
-                    assertThat(captured.context().get("throwable"))
-                            .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                            .containsEntry("class", "java.lang.IllegalStateException")
-                            .containsEntry("message", "db down");
-                    assertThat(((Map<?, ?>) captured.context().get("throwable")).get("stacktrace"))
-                            .asString()
-                            .contains("IllegalStateException: db down");
+                    assertThat(client.nativeError).isInstanceOf(IllegalStateException.class).hasMessage("db down");
                 });
     }
 
@@ -89,6 +84,29 @@ class DebugBundleLogbackIntegrationTest {
                 });
     }
 
+    @Test
+    void remoteThrowableProxyKeepsItsRetainedTextWithoutInventingNativeIdentity() {
+        var client = new RecordingDebugBundleClient(LogLevel.DEBUG);
+        var appender = new DebugBundleLogbackAppender(client);
+        var nativeEvent = new ch.qos.logback.classic.spi.LoggingEvent();
+        nativeEvent.setLoggerName("synthetic"); nativeEvent.setMDCPropertyMap(Map.of());
+        nativeEvent.setLevel(ch.qos.logback.classic.Level.ERROR);
+        nativeEvent.setMessage("remote failure");
+        nativeEvent.setThrowableProxy(new ch.qos.logback.classic.spi.ThrowableProxy(new IllegalStateException("outer", new IllegalArgumentException("cause"))));
+        var remote = ch.qos.logback.classic.spi.LoggingEventVO.build(nativeEvent);
+        appender.append(remote);
+        assertThat(client.logs()).hasSize(1);
+        assertThat(client.logs().get(0).context().toString()).contains("IllegalArgumentException", "cause", "stacktrace");
+        assertThat(client.exceptions).isEmpty();
+        appender.append(null);
+        for (var level : new ch.qos.logback.classic.Level[]{ch.qos.logback.classic.Level.DEBUG, ch.qos.logback.classic.Level.INFO}) {
+            var event = new ch.qos.logback.classic.spi.LoggingEvent();
+            event.setMDCPropertyMap(Map.of()); event.setLevel(level); event.setMessage("ordinary"); event.setLoggerName("synthetic");
+            appender.append(event);
+        }
+        assertThat(client.logs()).hasSize(3);
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class RecordingClientConfiguration {
         @Bean
@@ -99,6 +117,8 @@ class DebugBundleLogbackIntegrationTest {
 
     static final class RecordingDebugBundleClient implements DebugBundleClient {
         private final List<CapturedLog> logs = new ArrayList<>();
+        private final List<CapturedLog> exceptions = new ArrayList<>();
+        private Throwable nativeError;
         private final LogLevel configuredLogLevel;
 
         RecordingDebugBundleClient(LogLevel configuredLogLevel) {
@@ -129,6 +149,8 @@ class DebugBundleLogbackIntegrationTest {
 
         @Override
         public void captureException(Throwable error, Map<String, Object> context) {
+            nativeError = error;
+            exceptions.add(new CapturedLog((String) context.get("log_message"), LogLevel.ERROR, context));
         }
 
         @Override

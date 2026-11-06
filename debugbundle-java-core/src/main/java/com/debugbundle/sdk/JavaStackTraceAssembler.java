@@ -11,10 +11,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.logging.LogRecord;
 import java.util.function.Supplier;
 
@@ -25,27 +26,20 @@ final class JavaStackTraceAssembler {
     private static final int MAX_ORPHAN_CLIENTS = 128;
     private static final int MAX_LINES = 128;
     private static final int MAX_CHARS = 32_768;
-    private static final int MAX_LOGGER_NAME_CHARS = 256;
     private static final long IDLE_MILLIS = 20_000L;
     private static final long MAX_AGE_MILLIS = 45_000L;
-    private static final Pattern ROOT = Pattern.compile(
-            "^(?:Exception in thread \\\"[^\\\"]{1,128}\\\"\\s+)?([\\w.$/]+(?:Exception|Error|Throwable))(?::\\s*.*)?$"
-    );
-    private static final Pattern CONTINUATION = Pattern.compile(
-            "^\\s*(?:at\\s+[\\w.$/]+\\([^\\r\\n]*\\)|\\.\\.\\.\\s+\\d+\\s+more|"
-                    + "(?:Caused by|Suppressed):\\s+[\\w.$/]+(?:Exception|Error|Throwable)(?::|\\s|$).*)\\s*$"
-    );
-
     private final ConcurrentHashMap<Key, Assembly> active = new ConcurrentHashMap<>();
+    private final Semaphore activeSlots = new Semaphore(MAX_ACTIVE);
     private final ArrayDeque<Assembly> ready = new ArrayDeque<>();
     private final ReentrantLock readyLock = new ReentrantLock();
-    private final ConcurrentHashMap<DefaultDebugBundleClient, AtomicLong> orphanLines = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<DefaultDebugBundleClient, Orphans> orphanLines = new ConcurrentHashMap<>();
     private final AtomicInteger orphanClientCount = new AtomicInteger();
     private final ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor(
             new DebugBundleThreadFactory("debugbundle-java-stack-assembler")
     );
     private final Supplier<Long> clockMillis;
     private long lastOrphanSummaryAtMillis;
+    private final AtomicReference<CompletableFuture<Void>> pendingDrain = new AtomicReference<>();
 
     JavaStackTraceAssembler() {
         this(System::currentTimeMillis);
@@ -58,64 +52,81 @@ final class JavaStackTraceAssembler {
 
     boolean accept(LogRecord record, String message, LogLevel level,
                    Map<String, Object> context, DefaultDebugBundleClient client) {
-        if (message == null) return false;
+        if (message == null || message.length() > 16_384) return false;
         String loggerName = record.getLoggerName();
-        if (loggerName != null && loggerName.length() > MAX_LOGGER_NAME_CHARS) {
-            // Keep an unbounded logger name out of retained state. Its root falls back to a
-            // normal log; continuation lines become one pressure aggregate, not many incidents.
-            if ((level == LogLevel.ERROR || level == LogLevel.CRITICAL)
-                    && CONTINUATION.matcher(message).matches()) {
-                recordOrphan(client);
-                return true;
-            }
-            return false;
-        }
-        Key key = new Key(client, record.getLongThreadID(), loggerName);
+        if (!JavaStackSyntax.redirected(loggerName)) return false;
+        Key key = new Key(client, record.getLongThreadID(), loggerName, client.stackScopeIdentity());
         if (level != LogLevel.ERROR && level != LogLevel.CRITICAL) {
-            Assembly previous = active.remove(key);
+            Assembly previous = remove(key);
             if (previous != null) enqueueReady(previous);
             return false;
         }
-        Matcher root = ROOT.matcher(message);
+        Matcher root = JavaStackSyntax.ROOT.matcher(message);
         if (root.matches()) {
-            if (!active.containsKey(key) && active.size() >= MAX_ACTIVE) return false;
             String safeLine = client.scrubStackLine(message);
             if (safeLine == null) return true;
             Map<String, Object> safeContext = client.snapshotStackContext(context);
             long now = clockMillis.get();
             Assembly next = new Assembly(client, root.group(1), safeLine, safeContext, now);
-            Assembly previous = active.put(key, next);
+            Assembly previous = active.get(key);
+            if (previous == null) {
+                if (!activeSlots.tryAcquire()) {
+                    next.emit();
+                    return true;
+                }
+                previous = active.putIfAbsent(key, next);
+                if (previous != null) activeSlots.release();
+                else return true;
+            }
+            if (!active.replace(key, previous, next)) {
+                next.emit();
+                return true;
+            }
             if (previous != null) enqueueReady(previous);
             return true;
         }
 
-        if (CONTINUATION.matcher(message).matches()) {
+        if (JavaStackSyntax.CONTINUATION.matcher(message).matches()) {
             Assembly current = active.get(key);
+            long now = clockMillis.get();
+            if (current != null && current.expired(now) && active.remove(key, current)) {
+                activeSlots.release();
+                enqueueReady(current);
+                current = null;
+            }
             if (current == null) {
-                recordOrphan(client);
-                return true;
+                return recordOrphan(client, message);
             }
             String safeLine = client.scrubStackLine(message);
-            if (safeLine != null) current.append(safeLine, clockMillis.get());
+            if (safeLine != null && !current.append(safeLine, now)) return recordOrphan(client, safeLine);
             return true;
         }
 
-        Assembly previous = active.remove(key);
+        Assembly previous = remove(key);
         if (previous != null) enqueueReady(previous);
         return false;
     }
 
     CompletableFuture<Void> drainPending() {
         CompletableFuture<Void> done = new CompletableFuture<>();
+        var pending = pendingDrain.compareAndExchange(null, done);
+        if (pending != null) return pending;
         try {
             sweeper.execute(() -> {
-                sweep(true);
-                done.complete(null);
+                try { sweep(true); }
+                finally { pendingDrain.compareAndSet(done, null); done.complete(null); }
             });
         } catch (RuntimeException ignored) {
+            pendingDrain.compareAndSet(done, null);
             done.complete(null);
         }
         return done;
+    }
+
+    void boundary(LogRecord record, DefaultDebugBundleClient client) {
+        if (!JavaStackSyntax.redirected(record.getLoggerName())) return;
+        Assembly previous = remove(new Key(client, record.getLongThreadID(), record.getLoggerName(), client.stackScopeIdentity()));
+        if (previous != null) enqueueReady(previous);
     }
 
     CompletableFuture<Void> sweepNow() {
@@ -132,7 +143,9 @@ final class JavaStackTraceAssembler {
     }
 
     void close() {
-        drainPending().whenComplete((ignored, failure) -> sweeper.shutdownNow());
+        drainPending().whenComplete((ignored, failure) -> {
+            sweeper.shutdownNow(); orphanLines.clear(); orphanClientCount.set(0);
+        });
     }
 
     private void sweep(boolean force) {
@@ -140,9 +153,9 @@ final class JavaStackTraceAssembler {
             long now = clockMillis.get();
             for (Map.Entry<Key, Assembly> entry : active.entrySet()) {
                 Assembly assembly = entry.getValue();
-                if ((force || now - assembly.lastAtMillis >= IDLE_MILLIS
-                        || now - assembly.startedAtMillis >= MAX_AGE_MILLIS)
+                if ((force || assembly.expired(now))
                         && active.remove(entry.getKey(), assembly)) {
+                    activeSlots.release();
                     enqueueReady(assembly);
                 }
             }
@@ -157,11 +170,15 @@ final class JavaStackTraceAssembler {
             for (Assembly assembly : batch) assembly.emit();
             if (force || now - lastOrphanSummaryAtMillis >= 60_000L) {
                 boolean reported = false;
-                for (Map.Entry<DefaultDebugBundleClient, AtomicLong> entry : orphanLines.entrySet()) {
-                    long count = entry.getValue().getAndSet(0L);
-                    if (count > 0) {
+                for (Map.Entry<DefaultDebugBundleClient, Orphans> entry : orphanLines.entrySet()) {
+                    OrphanBatch batchLines = entry.getValue().drain();
+                    if (batchLines == null) continue;
+                    if (orphanLines.remove(entry.getKey(), entry.getValue())) orphanClientCount.decrementAndGet();
+                    if (batchLines.count() > 0) {
                         reported = true;
-                        entry.getKey().captureLog(count + " orphan Java stack continuation lines observed", LogLevel.WARNING);
+                        entry.getKey().captureStackContinuationContext(batchLines.count() + " orphan Java stack continuation lines observed",
+                                Map.of("logger", "stderr", "java_stack_continuation_context", true, "stack_continuations", batchLines.samples(),
+                                        "unmatched_count", batchLines.count(), "truncated", batchLines.count() > batchLines.samples().size()));
                     }
                 }
                 if (reported) lastOrphanSummaryAtMillis = now;
@@ -173,12 +190,12 @@ final class JavaStackTraceAssembler {
 
     private void enqueueReady(Assembly assembly) {
         if (!readyLock.tryLock()) {
-            recordOrphan(assembly.client);
+            assembly.emit();
             return;
         }
         try {
             if (ready.size() >= MAX_READY) {
-                recordOrphan(assembly.client);
+                assembly.emit();
                 return;
             }
             ready.addLast(assembly);
@@ -187,27 +204,66 @@ final class JavaStackTraceAssembler {
         }
     }
 
-    private void recordOrphan(DefaultDebugBundleClient client) {
-        AtomicLong count = orphanLines.get(client);
+    private Assembly remove(Key key) {
+        Assembly previous = active.remove(key);
+        if (previous != null) activeSlots.release();
+        return previous;
+    }
+
+    private boolean recordOrphan(DefaultDebugBundleClient client, String line) {
+        Orphans count = orphanLines.get(client);
         if (count == null) {
             while (true) {
                 int current = orphanClientCount.get();
-                if (current >= MAX_ORPHAN_CLIENTS) return;
+                if (current >= MAX_ORPHAN_CLIENTS) return false;
                 if (orphanClientCount.compareAndSet(current, current + 1)) break;
             }
-            AtomicLong added = new AtomicLong();
-            AtomicLong existing = orphanLines.putIfAbsent(client, added);
+            Orphans added = new Orphans();
+            Orphans existing = orphanLines.putIfAbsent(client, added);
             if (existing == null) count = added;
             else {
                 orphanClientCount.decrementAndGet();
                 count = existing;
             }
         }
-        count.incrementAndGet();
+        String safe = client.scrubStackLine(line);
+        return count.record(safe);
+    }
+
+    private record OrphanBatch(long count, List<String> samples) { }
+
+    private static final class Orphans {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final List<String> samples = new ArrayList<>();
+        private long count;
+        private boolean retired;
+
+        boolean record(String safe) {
+            if (!lock.tryLock()) return false;
+            try {
+                // A sweep may retire the bucket between map lookup and admission.
+                // Let the handler retain that line through ordinary protected capture.
+                if (retired) return false;
+                count++;
+                if (safe != null && samples.size() < 16) samples.add(safe.substring(0, Math.min(1024, safe.length())));
+                return true;
+            } finally { lock.unlock(); }
+        }
+
+        OrphanBatch drain() {
+            if (!lock.tryLock()) return null;
+            try {
+                if (retired) return null;
+                retired = true;
+                // One bounded snapshot owns both count and evidence. Removing the
+                // retired bucket also expires references to replaced SDK clients.
+                return new OrphanBatch(count, List.copyOf(samples));
+            } finally { lock.unlock(); }
+        }
     }
 
     // A reinitialized logger can reuse both thread and name while its previous client still drains.
-    private record Key(DefaultDebugBundleClient client, long threadId, String loggerName) {}
+    private record Key(DefaultDebugBundleClient client, long threadId, String loggerName, Object requestOwner) {}
 
     private static final class Assembly {
         private final DefaultDebugBundleClient client;
@@ -219,6 +275,8 @@ final class JavaStackTraceAssembler {
         private final long startedAtMillis;
         private volatile long lastAtMillis;
         private int chars;
+        private final AtomicBoolean sealed = new AtomicBoolean();
+        private volatile List<String> snapshot;
 
         private Assembly(DefaultDebugBundleClient client, String name, String rootLine,
                          Map<String, Object> context, long now) {
@@ -228,37 +286,40 @@ final class JavaStackTraceAssembler {
             this.startedAtMillis = now;
             this.lastAtMillis = now;
             this.lines.add(rootLine);
+            this.snapshot = List.of(rootLine);
             this.chars = rootLine.length();
         }
 
-        private void append(String line, long now) {
+        private boolean expired(long now) {
+            return now - lastAtMillis >= IDLE_MILLIS || now - startedAtMillis >= MAX_AGE_MILLIS;
+        }
+
+        private boolean append(String line, long now) {
             if (!lock.tryLock()) {
-                omitted.incrementAndGet();
-                return;
+                return false;
             }
             try {
+                if (sealed.get()) return false;
                 if (lines.size() >= MAX_LINES || chars + line.length() > MAX_CHARS) {
                     omitted.incrementAndGet();
-                    return;
+                    return true;
                 }
                 lines.add(line);
+                snapshot = List.copyOf(lines);
                 chars += line.length();
                 lastAtMillis = now;
+                return !sealed.get();
             } finally {
                 lock.unlock();
             }
         }
 
         private void emit() {
-            List<String> snapshot;
-            lock.lock();
-            try {
-                snapshot = new ArrayList<>(lines);
-            } finally {
-                lock.unlock();
-            }
-            if (omitted.get() > 0) snapshot.add("... " + omitted.get() + " continuation lines omitted");
-            client.captureReportedJavaStack(name, snapshot.get(0), String.join("\n", snapshot),
+            if (!sealed.compareAndSet(false, true)) return;
+            // Immutable published snapshots let draining avoid waiting on a producer.
+            List<String> output = new ArrayList<>(snapshot);
+            if (omitted.get() > 0) output.add("... " + omitted.get() + " continuation lines omitted");
+            client.captureReportedJavaStack(name, output.get(0), String.join("\n", output),
                     context, Instant.ofEpochMilli(startedAtMillis));
         }
     }

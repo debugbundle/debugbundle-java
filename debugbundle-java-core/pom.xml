@@ -7,7 +7,7 @@
   <parent>
     <groupId>com.debugbundle</groupId>
     <artifactId>debugbundle-java-parent</artifactId>
-    <version>3.1.0</version>
+    <version>3.1.1</version>
   </parent>
 
   <artifactId>debugbundle-java-core</artifactId>
@@ -15,6 +15,12 @@
   <description>Core DebugBundle Java SDK</description>
 
   <dependencies>
+    <dependency>
+      <groupId>org.jboss.stdio</groupId>
+      <artifactId>jboss-stdio</artifactId>
+      <version>1.1.0.Final</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>

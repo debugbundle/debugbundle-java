@@ -99,8 +99,10 @@ final class EventDeliveryWorker {
         return offerInternal(event, true, incidentPriority || isHighPriority(event));
     }
 
-    void offerException(Map<String, Object> shell, Throwable error) {
-        if (offerInternal(shell, true, true, new WeakReference<>(error))) scheduleSnapshots();
+    boolean offerException(Map<String, Object> shell, Throwable error) {
+        boolean accepted = offerInternal(shell, true, true, new WeakReference<>(error));
+        if (accepted) scheduleSnapshots();
+        return accepted;
     }
 
     private void scheduleSnapshots() {

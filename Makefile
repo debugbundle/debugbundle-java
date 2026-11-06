@@ -35,6 +35,9 @@ test: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) clean test
 
 TEST_CLASS ?= DebugBundleCaptureSafetyTest
+test-stderr-released:
+	python3 scripts/check-redirected-stderr-releases.py
+
 test-core-focused: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) -pl debugbundle-java-core -Dtest='$(TEST_CLASS)' test
 
@@ -45,7 +48,7 @@ coverage-only: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -Dspring.boot.version=$(SPRING_BOOT_VERSION) clean test org.jacoco:jacoco-maven-plugin:0.8.15:report@write-coverage-report org.jacoco:jacoco-maven-plugin:0.8.15:check@enforce-source-file-coverage
 
 artifact-network-check: maven-runtime-image
-	$(MAVEN_RUN) sh -lc 'curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 https://repo.maven.apache.org/maven2/org/apache/maven/shared/file-management/3.1.0/file-management-3.1.0.pom'
+	$(MAVEN_RUN) sh -lc 'curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 https://repo.maven.apache.org/maven2/org/apache/maven/shared/file-management/3.1.1/file-management-3.1.1.pom'
 
 artifact-resolution-check: maven-runtime-image
 	$(MAVEN_RUN) $(MAVEN_COMMAND) -U -e -DskipTests -pl debugbundle-java-core -am package
@@ -79,6 +82,8 @@ release-bundle-check: maven-runtime-image release-bundle-test
 # Mirror maintained CI runtimes sequentially; they share module target directories.
 evidence-runtime-matrix:
 	mkdir -p .tmp/evidence-runtime
+	$(MAKE) verify JAVA_VERSION=17 > .tmp/evidence-runtime/verify-17.log 2>&1
+	$(MAKE) smoke JAVA_VERSION=17 > .tmp/evidence-runtime/installed-17.log 2>&1
 	$(MAKE) verify JAVA_VERSION=21 > .tmp/evidence-runtime/verify-21.log 2>&1
 	$(MAKE) smoke JAVA_VERSION=21 > .tmp/evidence-runtime/installed-21.log 2>&1
 	$(MAKE) verify JAVA_VERSION=25 > .tmp/evidence-runtime/verify-25.log 2>&1

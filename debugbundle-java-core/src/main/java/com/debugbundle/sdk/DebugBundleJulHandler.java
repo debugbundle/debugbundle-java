@@ -37,8 +37,12 @@ final class DebugBundleJulHandler extends Handler {
             LogLevel level = LogLevel.fromJulLevel(record.getLevel());
             boolean logEligible = !(client instanceof DefaultDebugBundleClient defaultClient)
                     || defaultClient.shouldCaptureLogOrBreadcrumb(level);
+            if (client instanceof DefaultDebugBundleClient defaultClient
+                    && !logEligible) stackTraces.boundary(record, defaultClient);
             if (!logEligible && level != LogLevel.ERROR && level != LogLevel.CRITICAL) return;
             Throwable thrown = record.getThrown();
+            if (thrown != null && client instanceof DefaultDebugBundleClient defaultClient)
+                stackTraces.boundary(record, defaultClient);
             if (!logEligible && thrown == null) {
                 return;
             }

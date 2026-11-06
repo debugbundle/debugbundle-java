@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [3.1.1] - 2026-11-06
+
+- Read duplicate-capture metadata from the protected SDK snapshot, preserving primary exceptions without invoking application-defined map accessors.
+- Final audit: terminate pending text traces at native/filtered JUL record boundaries, atomically bound and expire orphan summaries, preserve ERROR-only hosted admission, and record cross-path identity only after accepted queue handoff. Deploy the hosted classifier before upgrading this SDK.
+
+- Fix WildFly/JBoss redirected stderr assembly for module/classloader/version-prefixed frames, causes, suppressed exceptions and native/proxy frames. Retain bounded redacted orphan context; isolate requests and correct GET/POST suppression. Preserve native Logback error evidence and scoped logger/middleware identity.
+- Existing event schemas remain compatible; complete exception inputs may create new future fingerprints. Consumer installations require an explicit upgrade.
 
 ## [3.1.0] - 2026-11-01
 

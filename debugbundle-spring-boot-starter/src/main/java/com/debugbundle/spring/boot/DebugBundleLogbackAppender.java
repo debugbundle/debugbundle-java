@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
+import ch.qos.logback.classic.spi.ThrowableProxy;
 import ch.qos.logback.core.AppenderBase;
 import com.debugbundle.sdk.DebugBundleClient;
 import com.debugbundle.sdk.LogLevel;
@@ -43,6 +44,11 @@ final class DebugBundleLogbackAppender extends AppenderBase<ILoggingEvent> {
             }
 
             IThrowableProxy throwableProxy = event.getThrowableProxy();
+            if (level == LogLevel.ERROR && throwableProxy instanceof ThrowableProxy nativeProxy) {
+                context.put("log_message", event.getFormattedMessage());
+                client.captureException(nativeProxy.getThrowable(), context);
+                return;
+            }
             if (throwableProxy != null) {
                 Map<String, Object> throwable = new LinkedHashMap<>();
                 throwable.put("class", throwableProxy.getClassName());
@@ -52,7 +58,7 @@ final class DebugBundleLogbackAppender extends AppenderBase<ILoggingEvent> {
             }
 
             client.captureLog(event.getFormattedMessage(), level, context);
-        } catch (RuntimeException ignored) {
+        } catch (Throwable ignored) {
         } finally {
             IN_APPEND.remove();
         }

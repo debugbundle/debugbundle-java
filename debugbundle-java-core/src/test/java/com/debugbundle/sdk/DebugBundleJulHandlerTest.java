@@ -232,7 +232,7 @@ class DebugBundleJulHandlerTest {
             assertThat(previousEvents).contains("previous.App.run")
                     .doesNotContain("next.Orphan.run", "next.App.run");
             assertThat(nextTransport.calls().toString()).contains("next.App.run")
-                    .doesNotContain("previous.App.run", "next.Orphan.run");
+                    .contains("next.Orphan.run").doesNotContain("previous.App.run");
         } finally {
             handler.close();
             previous.close();
@@ -250,10 +250,10 @@ class DebugBundleJulHandlerTest {
         );
         DebugBundleJulHandler handler = new DebugBundleJulHandler(() -> client);
         try {
-            publishStderr(handler, 117L, "Aa", "java.lang.IllegalStateException: first logger");
-            publishStderr(handler, 117L, "BB", "java.lang.IllegalArgumentException: second logger");
-            publishStderr(handler, 117L, "Aa", "\tat first.App.run(App.java:10)");
-            publishStderr(handler, 117L, "BB", "\tat second.App.run(App.java:20)");
+            publishStderr(handler, 117L, "org.jboss.stdio.Aa", "java.lang.IllegalStateException: first logger");
+            publishStderr(handler, 117L, "org.jboss.stdio.BB", "java.lang.IllegalArgumentException: second logger");
+            publishStderr(handler, 117L, "org.jboss.stdio.Aa", "\tat first.App.run(App.java:10)");
+            publishStderr(handler, 117L, "org.jboss.stdio.BB", "\tat second.App.run(App.java:20)");
             handler.drainPendingStacks().join();
             client.flush().join();
 
@@ -274,7 +274,7 @@ class DebugBundleJulHandlerTest {
     }
 
     @Test
-    void oversizedLoggerNameKeepsRootAndSummarizesContinuations() {
+    void unrecognisedLoggerKeepsOrdinaryErrorEligibilityEvenForFrameLikeText() {
         FakeTransport transport = new FakeTransport();
         DefaultDebugBundleClient client = new DefaultDebugBundleClient(
                 DebugBundleConfig.builder().projectToken("dbundle_proj_test")
@@ -292,9 +292,8 @@ class DebugBundleJulHandlerTest {
 
             List<Map<String, Object>> events = transport.calls().stream()
                     .flatMap(call -> call.events().stream()).toList();
-            assertThat(events).hasSize(2);
-            assertThat(events.toString()).contains("oversized logger root")
-                    .contains("100 orphan Java stack continuation lines observed");
+            assertThat(events.toString()).contains("oversized logger root", "example.App.run")
+                    .doesNotContain("orphan Java stack continuation");
         } finally {
             handler.close();
             client.close();

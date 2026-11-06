@@ -27,6 +27,7 @@ final class SuppressionKeyBuilder {
                     "message", payload.get("message"),
                     "stack", normalizedStackSignature(payload.get("stack")),
                     "path", nestedValue(payload, "request", "path"),
+                    "method", nestedValue(payload, "request", "method"),
                     "status", nestedValue(payload, "response", "status_code")
             ));
         }

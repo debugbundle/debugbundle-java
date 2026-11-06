@@ -35,6 +35,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     private final EventSuppressionTracker suppressionTracker = new EventSuppressionTracker();
     private final Set<String> sensitiveFields;
     private final ThreadLocal<RequestScopeState> requestScopeState = new ThreadLocal<>();
+    private final ExceptionCaptureIdentity exceptionIdentity = new ExceptionCaptureIdentity();
     private final EvidenceDeliveryState evidence;
     private final RemoteConfigManager remote;
     private final EvidenceController evidenceController;
@@ -105,6 +106,9 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                     request == null ? List.of() : request.breadcrumbs().snapshot()
             ));
             if (shell != null) {
+                Object scope = config.beforeSend() == null ? stackScopeIdentity() : null;
+                boolean automatic = fatal || shell.get("context") instanceof Map<?, ?> safeContext && safeContext.containsKey("logger");
+                if (!exceptionIdentity.admit(error, scope, automatic, now())) return;
                 if (fatal) {
                     @SuppressWarnings("unchecked")
                     var fatalPayload = (Map<String, Object>) shell.get("payload");
@@ -118,7 +122,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                         payload.put("execution", execution);
                     }
                 }
-                delivery.offerException(shell, error);
+                if (delivery.offerException(shell, error)) exceptionIdentity.remember(error, scope, automatic, now());
             }
         } catch (Throwable ignored) {
             // Application exception accessors must not make SDK capture escape into the host.
@@ -396,6 +400,11 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         }
     }
 
+    Object stackScopeIdentity() {
+        RequestScopeState scope = currentRequest();
+        return scope == null ? null : scope.ended();
+    }
+
     @SuppressWarnings("unchecked")
     Map<String, Object> snapshotStackContext(Map<String, Object> context) {
         try {
@@ -403,6 +412,15 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         } catch (Throwable ignored) {
             return Map.of();
         }
+    }
+
+    // The original ERROR stderr record already passed log policy. Its unmatched
+    // evidence retains ERROR admission and is classified as context by the hosted worker.
+    void captureStackContinuationContext(String message, Map<String, Object> context) {
+        if (!active || delivery == null || !delivery.tryReserve(false)) return;
+        try { bufferPreparedEvent(eventFactory.buildLogEvent(message, LogLevel.ERROR, context)); }
+        catch (Throwable ignored) { }
+        finally { delivery.releaseReservation(); }
     }
 
     void captureReportedJavaStack(
@@ -491,7 +509,10 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         if (event == null || !evidenceController.eligible(event)) return null;
         var payload = (Map<String, Object>) event.get("payload");
         String type = (String) event.get("event_type");
-        if ("log_event".equals(type) && !shouldCaptureLog(LogLevel.fromName((String) payload.get("level")))) return null;
+        if ("log_event".equals(type)) {
+            LogLevel level = LogLevel.fromName((String) payload.get("level"));
+            if (!shouldCaptureLog(level)) return null;
+        }
         if ("request_event".equals(type) && !RequestCapturePolicy.shouldCapture(
                 ((Number) payload.get("response_status")).intValue(), (String) payload.get("path"),
                 (String) payload.get("method"), remote.remoteConfigSnapshot.capturePolicy())) return null;

@@ -558,7 +558,7 @@ ceilings, and excludes setup/network/cleanup. The synthetic client uses local-on
 mode with an in-memory transport; JVM allocation counters are required. Existing
 capture-safety timing tests remain part of `make verify`.
 
-### Hook size limits (unreleased correction)
+### Hook size limits
 
 A hook replacement whose optional exception evidence exceeds the combined 32 KiB
 UTF-8 JSON budget keeps its replacement message and other primary fields. The SDK

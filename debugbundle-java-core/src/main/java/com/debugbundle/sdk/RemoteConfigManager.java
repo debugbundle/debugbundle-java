@@ -59,7 +59,7 @@ final class RemoteConfigManager {
                     EvidenceDeliveryState.url(RemoteConfigEndpoint.fromIngestionEndpoint(config.endpoint())),
                     config.projectToken(),
                     "@debugbundle/sdk-java",
-                    "3.1.3",
+                    "3.1.4",
                     remoteConfigEtag,
                     config.requestTimeout()
             ));

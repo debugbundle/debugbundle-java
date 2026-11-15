@@ -18,7 +18,26 @@ final class EvidenceWire {
 
     private EvidenceWire() { }
 
+    // Bounded owned JSON only. Optional byte limits do not invalidate owner policy.
+    static Map<String, Object> fitHookEvidence(Map<String, Object> event) {
+        if (!"backend_exception".equals(event.get("event_type")) && !"frontend_exception".equals(event.get("event_type"))) return event;
+        Map<String, Object> payload = object(event.get("payload"));
+        Map<String, Object> additions = new LinkedHashMap<>();
+        for (String field : List.of("exception_evidence", "execution", "resource_observations"))
+            if (payload.containsKey(field)) additions.put(field, payload.get(field));
+        if (additions.isEmpty()) return event;
+        if (event.containsKey("context") && !(event.get("context") instanceof Map<?, ?>)) return event;
+        Object selected = object(event.get("context")).get("evidence_reference");
+        if (reference(selected)) additions.put("evidence_reference", selected);
+        if (CanonicalJson.bytes(additions) <= 32768 || !CanonicalEventSchema.acceptsOwned(event) || !validOwnedEvent(event, false)) return event;
+        return IngestionWire.withoutOptional(event, true);
+    }
+
     static boolean validOwnedEvent(Map<String, Object> event) {
+        return validOwnedEvent(event, true);
+    }
+
+    private static boolean validOwnedEvent(Map<String, Object> event, boolean checkByteBudget) {
         try {
             Map<String, Object> payload = object(event.get("payload"));
             if ("diagnostic_context".equals(event.get("event_type"))) {
@@ -39,7 +58,7 @@ final class EvidenceWire {
                 boolean frontend = "frontend_exception".equals(event.get("event_type"));
                 if (!(backend && !field.equals("resource_observations") || frontend && !field.equals("execution"))) return false;
                 Object value = payload.get(field);
-                if (field.equals("exception_evidence") && !graph(value)) return false;
+                if (field.equals("exception_evidence") && !graph(value, checkByteBudget)) return false;
                 if (field.equals("execution") && !text(object(value).get("name"), 128)) return false;
                 if (field.equals("resource_observations") && !resources(value)) return false;
                 additions.put(field, value);
@@ -47,7 +66,7 @@ final class EvidenceWire {
             if (additions.isEmpty()) return true;
             Object selected = object(event.get("context")).get("evidence_reference");
             if (reference(selected)) additions.put("evidence_reference", selected);
-            return CanonicalJson.bytes(additions) <= 32768;
+            return !checkByteBudget || CanonicalJson.bytes(additions) <= 32768;
         } catch (RuntimeException ignored) {
             return false;
         }
@@ -88,7 +107,7 @@ final class EvidenceWire {
         return (List<Map<String, Object>>) value;
     }
 
-    private static boolean graph(Object value) {
+    private static boolean graph(Object value, boolean checkByteBudget) {
         Map<String, Object> graph = object(value);
         List<Map<String, Object>> nodes = items(graph.get("nodes"));
         if (nodes.isEmpty() || nodes.size() > 8) return false;
@@ -115,7 +134,7 @@ final class EvidenceWire {
         }
         Set<Integer> reached = new HashSet<>();
         return visit(((Number) graph.get("root_id")).intValue(), 0, adjacency, reached, new HashSet<>())
-                && reached.size() == adjacency.size() && CanonicalJson.bytes(value) <= 32768;
+                && reached.size() == adjacency.size() && (!checkByteBudget || CanonicalJson.bytes(value) <= 32768);
     }
 
     private static boolean visit(int id, int depth, Map<Integer, List<Integer>> nodes, Set<Integer> reached, Set<Integer> active) {

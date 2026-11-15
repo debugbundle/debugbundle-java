@@ -31,6 +31,10 @@ class ExceptionEvidenceTest {
         var config = DebugBundleConfig.builder().projectToken("synthetic-token").environment("test")
                 .captureExceptionEvidence(true)
                 .evidenceCapabilities(Map.of("version", 1, "features", EvidenceWire.FEATURES))
+                // Discovery is synthetic too: failed live discovery legitimately
+                // revokes pinned evidence and must not race this capture assertion.
+                .remoteConfigFetcher(new FakeRemoteConfigFetcher(new RemoteConfigResponse(200,
+                        JsonWriter.write(Map.of("evidence_capabilities", Map.of("version", 1, "features", EvidenceWire.FEATURES))), "fixture")))
                 .flushInterval(Duration.ofHours(1)).build();
         try (var client = new DefaultDebugBundleClient(config, transport, System::currentTimeMillis)) {
             var root = new IllegalStateException("original failure", new IllegalArgumentException("cause failure"));

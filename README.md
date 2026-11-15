@@ -1,6 +1,6 @@
 # debugbundle-java
 
-Patch 3.1.3 protects invitation and organisation-transfer credentials in captured text while preserving public APIs and event schemas. Upgrade the DebugBundle distribution to adopt the protection.
+Patch 3.1.4 preserves application hook redaction under optional-evidence limits and complete validation. Public capture APIs and event schemas remain compatible.
 
 Java SDK, servlet adapters, and Spring Boot starter for DebugBundle.
 
@@ -18,7 +18,7 @@ The installed smoke runs in a separate JVM using the [Maven external-process run
 
 Version 3.0 snapshots exceptions on its existing background worker through bounded weak references, preserving original stacks when the input is still reachable. Collected inputs have an explicit unavailable-details fallback. See [snapshot ownership and shutdown limits](MIGRATION-3.0.md#exception-snapshots-and-ownership).
 
-The installation examples below target the **3.1.3** capture correction. Deploy the compatible hosted classifier before adopting this Java patch. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
+The installation examples below target the **3.1.4** capture correction. Deploy the compatible hosted classifier before adopting this Java patch. Review the [3.0 migration guide](MIGRATION-3.0.md) before upgrading; do not mix major versions across Java modules.
 
 ## Installation
 
@@ -28,7 +28,7 @@ For Spring Boot 3 applications:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-spring-boot-starter</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
@@ -54,7 +54,7 @@ Spring Boot, servlet WARs, JAX-RS/RESTEasy, WildFly/JBoss, vanilla Java and the 
 ### Packages for other runtimes
 
 ```kotlin
-implementation("com.debugbundle:debugbundle-spring-boot-starter:3.1.3")
+implementation("com.debugbundle:debugbundle-spring-boot-starter:3.1.4")
 ```
 
 Non-Spring Java applications can install the core SDK:
@@ -63,7 +63,7 @@ Non-Spring Java applications can install the core SDK:
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-core</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
@@ -73,7 +73,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-jakarta</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
@@ -81,7 +81,7 @@ Servlet WAR applications should add exactly one servlet adapter that matches the
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-servlet-javax</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
@@ -91,7 +91,7 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-jakarta</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
@@ -99,14 +99,14 @@ JAX-RS applications can add the matching namespace adapter alongside the servlet
 <dependency>
   <groupId>com.debugbundle</groupId>
   <artifactId>debugbundle-java-jaxrs-javax</artifactId>
-  <version>3.1.3</version>
+  <version>3.1.4</version>
 </dependency>
 ```
 
 App-server operators that prefer JVM startup injection can add the bootstrap agent:
 
 ```text
--javaagent:/opt/debugbundle/debugbundle-java-agent-3.1.3.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
+-javaagent:/opt/debugbundle/debugbundle-java-agent-3.1.4.jar=config=/etc/debugbundle/debugbundle.properties,capture-jul=true,capture-uncaught=true
 ```
 
 Import the published Java BOM when you install more than one DebugBundle artifact so every module stays on the same version:
@@ -117,7 +117,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
     <dependency>
       <groupId>com.debugbundle</groupId>
       <artifactId>debugbundle-java-parent</artifactId>
-      <version>3.1.3</version>
+      <version>3.1.4</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -127,7 +127,7 @@ Import the published Java BOM when you install more than one DebugBundle artifac
 
 ```kotlin
 dependencies {
-  implementation(platform("com.debugbundle:debugbundle-java-parent:3.1.3"))
+  implementation(platform("com.debugbundle:debugbundle-java-parent:3.1.4"))
     implementation("com.debugbundle:debugbundle-java-core")
     implementation("com.debugbundle:debugbundle-java-servlet-jakarta")
 }
@@ -557,3 +557,13 @@ checks native cause preservation, original-error priority and retained-byte
 ceilings, and excludes setup/network/cleanup. The synthetic client uses local-only
 mode with an in-memory transport; JVM allocation counters are required. Existing
 capture-safety timing tests remain part of `make verify`.
+
+### Hook size limits (unreleased correction)
+
+A hook replacement whose optional exception evidence exceeds the combined 32 KiB
+UTF-8 JSON budget keeps its replacement message and other primary fields. The SDK
+omits the oversized optional evidence and its typed reference, recording
+`context.evidence_limits`. Ordinary custom context remains intact. A size limit
+must not restore text removed by the hook; an otherwise valid replacement that
+cannot fit later ownership or transport limits is withheld. Malformed returns and
+throwing hooks retain the established protected-original fallback.

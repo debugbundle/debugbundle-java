@@ -12,6 +12,7 @@ final class BeforeSendProcessor {
             Map<String, Object> result = hook.apply(OwnedJson.copyEvent(event));
             if (result == null) return null;
             Map<String, Object> owned = OwnedJson.copyEvent(result);
+            owned = EvidenceWire.fitHookEvidence(owned);
             return validOwned(owned) ? owned : event;
         } catch (JsonValidationBudgetExceeded ignored) {
             return null;

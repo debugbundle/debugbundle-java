@@ -8,6 +8,50 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class BeforeSendProcessorValidationTest {
+    @Test
+    @SuppressWarnings("unchecked")
+    void sharedHookByteBoundaries() throws Exception {
+        try (var stream = getClass().getResourceAsStream("/evidence/before-send-budget.json")) {
+            Map<String, Object> corpus = new com.fasterxml.jackson.databind.ObjectMapper().readValue(stream, new com.fasterxml.jackson.core.type.TypeReference<>() { });
+            for (var fixture : (List<Map<String, Object>>) corpus.get("cases")) {
+                var result = BeforeSendProcessor.apply((Map<String, Object>) corpus.get("original"), ignored -> (Map<String, Object>) fixture.get("event"));
+                boolean fallback = "fallback".equals(fixture.get("outcome"));
+                assertThat(result).as(fixture.get("id").toString()).isNotNull();
+                var payload = (Map<?, ?>) result.get("payload");
+                assertThat(payload.get("message")).isEqualTo(fallback ? "owner removed" : "owner replacement");
+                assertThat(BeforeSendProcessor.isValid(result)).isTrue();
+                if (fallback) continue;
+                assertThat(payload.containsKey("exception_evidence")).isEqualTo("keep".equals(fixture.get("outcome")));
+                var context = (Map<?, ?>) result.get("context");
+                assertThat(context.get("owner_field")).isEqualTo("preserved");
+                if (fixture.get("id").toString().endsWith("-legacy")) assertThat(context.containsKey("evidence_reference")).isTrue();
+                if (fixture.get("id").toString().endsWith("-typed") && "reduce".equals(fixture.get("outcome"))) assertThat(context.containsKey("evidence_reference")).isFalse();
+            }
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void combinedEvidenceBudgetNeverRestoresOwnerRemovedContent() throws Exception {
+        try (var stream = getClass().getResourceAsStream("/evidence/evidence-wire-cases.json")) {
+            Map<String, Object> corpus = new com.fasterxml.jackson.databind.ObjectMapper().readValue(stream, new com.fasterxml.jackson.core.type.TypeReference<>() { });
+            var fixture = ((List<Map<String, Object>>) corpus.get("events")).stream().filter(item -> "combined_optional_bytes".equals(item.get("id"))).findFirst().orElseThrow();
+            var replacement = (Map<String, Object>) fixture.get("event");
+            ((Map<String, Object>) replacement.get("payload")).put("message", "owner replacement");
+            var original = event("log_event", validLogPayload());
+            var result = BeforeSendProcessor.apply(original, ignored -> replacement);
+            assertThat(result).isNotNull();
+            assertThat(((Map<?, ?>) result.get("payload")).get("message")).isEqualTo("owner replacement");
+            assertThat(BeforeSendProcessor.isValid(result)).isTrue();
+            assertThat(((Map<?, ?>) result.get("payload")).containsKey("exception_evidence")).isFalse();
+            assertThat(((Map<?, ?>) replacement.get("payload")).containsKey("exception_evidence")).isTrue();
+            for (Object context : new Object[] {null, "invalid", List.of()}) {
+                replacement.put("context", context);
+                assertThat(BeforeSendProcessor.apply(original, ignored -> replacement)).isSameAs(original);
+            }
+        }
+    }
+
     @org.junit.jupiter.api.Test
     void rejectsIncompleteNestedBackendEnvelope() {
         Map<String, Object> event = new java.util.LinkedHashMap<>();

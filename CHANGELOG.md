@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-25
+
+- Add exact-key privacy to capture and web relays and expose it in Spring Boot configuration.
+
 ## [3.1.4] - 2026-11-15
 
 - Preserve invalid-return fallback when optional evidence is both malformed and oversized; cover mixed evidence fields with the shared hook-budget corpus.

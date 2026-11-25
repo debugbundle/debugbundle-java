@@ -37,9 +37,10 @@ final class OperationContext {
         }
     }
     private final ThreadLocal<Lease> current = new ThreadLocal<>();
-    private final Set<String> sensitive;
+    private final TelemetryPrivacy.CompiledPolicy privacyPolicy;
     private volatile boolean closed;
-    OperationContext(Set<String> sensitive) { this.sensitive = sensitive; }
+    OperationContext(Set<String> sensitive) { this(TelemetryPrivacy.tryCompile(sensitive, Set.of())); }
+    OperationContext(TelemetryPrivacy.CompiledPolicy privacyPolicy) { this.privacyPolicy = privacyPolicy; }
 
     Lease begin(Map<String, Object> options) {
         if (closed) return null;
@@ -47,7 +48,7 @@ final class OperationContext {
         int depth = 0;
         for (Lease parent = previous; parent != null; parent = parent.previous) if (++depth >= 32) return null;
         String kind = options.get("kind") instanceof String value && Set.of("request", "command", "job", "unknown").contains(value) ? value : "unknown";
-        String name = options.get("name") instanceof String value ? ExceptionSnapshot.clip((String) TelemetryPrivacy.protect(value, sensitive), 128) : null;
+        String name = options.get("name") instanceof String value ? ExceptionSnapshot.clip((String) TelemetryPrivacy.protect(value, privacyPolicy), 128) : null;
         Object rawLimit = options.get("limitMs");
         Double limit = rawLimit instanceof Integer || rawLimit instanceof Long || rawLimit instanceof Double || rawLimit instanceof Float
                 ? ((Number) rawLimit).doubleValue() : null;

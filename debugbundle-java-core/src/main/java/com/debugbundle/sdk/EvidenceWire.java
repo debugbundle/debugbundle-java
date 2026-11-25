@@ -79,13 +79,13 @@ final class EvidenceWire {
                 && fresh(map.get("failure_ref")) && scope(map.get("scope"));
     }
 
-    private static boolean scope(Object value) {
+    static boolean scope(Object value) {
         Map<String, Object> scope = object(value);
         String key = "page".equals(scope.get("kind")) ? "page_id" : "operation".equals(scope.get("kind")) ? "operation_id" : null;
         return key != null && scope.keySet().equals(Set.of("kind", key)) && fresh(scope.get(key));
     }
 
-    private static boolean fresh(Object value) {
+    static boolean fresh(Object value) {
         return value instanceof String text && text.length() == 36 && V4.matcher(text).matches();
     }
 

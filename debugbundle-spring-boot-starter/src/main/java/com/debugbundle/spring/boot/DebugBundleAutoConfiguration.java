@@ -29,6 +29,7 @@ public class DebugBundleAutoConfiguration {
                 .service(properties.getService())
                 .enabled(properties.isEnabled())
                 .redactFields(properties.getRedactFields())
+                .redactExactFields(properties.getRedactExactFields())
                 .sampleRate(properties.getSampleRate())
                 .batchSize(properties.getBatchSize())
                 .flushInterval(properties.getFlushInterval())

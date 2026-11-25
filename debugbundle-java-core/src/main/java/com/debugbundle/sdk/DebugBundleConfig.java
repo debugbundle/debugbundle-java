@@ -11,6 +11,8 @@ public final class DebugBundleConfig {
     private final String service;
     private final boolean enabled;
     private final List<String> redactFields;
+    private final List<String> redactExactFields;
+    private final boolean customRedactFields;
     private final double sampleRate;
     private final int batchSize;
     private final Duration flushInterval;
@@ -36,6 +38,8 @@ public final class DebugBundleConfig {
         this.service = builder.service;
         this.enabled = builder.enabled;
         this.redactFields = List.copyOf(builder.redactFields);
+        this.redactExactFields = List.copyOf(builder.redactExactFields);
+        this.customRedactFields = builder.customRedactFields;
         this.sampleRate = builder.sampleRate;
         this.batchSize = builder.batchSize;
         this.flushInterval = builder.flushInterval;
@@ -78,6 +82,14 @@ public final class DebugBundleConfig {
 
     public List<String> redactFields() {
         return redactFields;
+    }
+
+    public List<String> redactExactFields() {
+        return redactExactFields;
+    }
+
+    boolean hasCustomRedactFields() {
+        return customRedactFields;
     }
 
     public double sampleRate() {
@@ -176,6 +188,8 @@ public final class DebugBundleConfig {
                 "ssn",
                 "credit_card"
         ));
+        private List<String> redactExactFields = new ArrayList<>();
+        private boolean customRedactFields;
         private double sampleRate = 1.0d;
         private int batchSize = 25;
         private Duration flushInterval = Duration.ofSeconds(5);
@@ -222,6 +236,14 @@ public final class DebugBundleConfig {
         public Builder redactFields(List<String> redactFields) {
             if (redactFields != null) {
                 this.redactFields = new ArrayList<>(redactFields);
+                this.customRedactFields = true;
+            }
+            return this;
+        }
+
+        public Builder redactExactFields(List<String> redactExactFields) {
+            if (redactExactFields != null) {
+                this.redactExactFields = new ArrayList<>(redactExactFields);
             }
             return this;
         }

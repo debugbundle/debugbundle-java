@@ -26,11 +26,22 @@ final class Redaction {
 
     @SuppressWarnings("unchecked")
     static Object redact(Object value, Set<String> sensitiveFields) {
-        return redact(value, sensitiveFields, 0, Collections.newSetFromMap(new IdentityHashMap<>()));
+        return redact(value, sensitiveFields, Set.of());
+    }
+
+    static Object redact(Object value, Set<String> sensitiveFields, Set<String> exactFields) {
+        Set<String> normalizedExact = normalizeExactFields(exactFields);
+        return redact(value, sensitiveFields, normalizedExact, 0, Collections.newSetFromMap(new IdentityHashMap<>()));
     }
 
     @SuppressWarnings("unchecked")
-    private static Object redact(Object value, Set<String> sensitiveFields, int depth, Set<Object> seen) {
+    private static Object redact(
+            Object value,
+            Set<String> sensitiveFields,
+            Set<String> exactFields,
+            int depth,
+            Set<Object> seen
+    ) {
         if (value == null) {
             return null;
         }
@@ -52,10 +63,10 @@ final class Redaction {
                     break;
                 }
                 String key = String.valueOf(entry.getKey());
-                if (isSensitiveKey(key, sensitiveFields)) {
+                if (isSensitiveKey(key, sensitiveFields) || isExactSensitiveKey(key, exactFields)) {
                     redacted.put(key, REDACTED);
                 } else {
-                    redacted.put(key, redact(entry.getValue(), sensitiveFields, depth + 1, seen));
+                    redacted.put(key, redact(entry.getValue(), sensitiveFields, exactFields, depth + 1, seen));
                 }
                 count++;
             }
@@ -73,13 +84,39 @@ final class Redaction {
                     redacted.add(TRUNCATED);
                     break;
                 }
-                redacted.add(redact(item, sensitiveFields, depth + 1, seen));
+                redacted.add(redact(item, sensitiveFields, exactFields, depth + 1, seen));
                 count++;
             }
             seen.remove(rawList);
             return redacted;
         }
         return value;
+    }
+
+    static boolean isExactSensitiveKey(String key, Set<String> exactFields) {
+        if (key == null || exactFields == null || exactFields.isEmpty()) {
+            return false;
+        }
+        String normalized = TelemetryPrivacy.asciiLower(key.trim());
+        for (String candidate : exactFields) {
+            if (candidate != null && TelemetryPrivacy.asciiLower(candidate.trim()).equals(normalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Set<String> normalizeExactFields(Set<String> exactFields) {
+        if (exactFields == null || exactFields.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> normalized = new java.util.HashSet<>(exactFields.size());
+        for (String field : exactFields) {
+            if (field != null && !field.isBlank()) {
+                normalized.add(TelemetryPrivacy.asciiLower(field.trim()));
+            }
+        }
+        return normalized;
     }
 
     static boolean isSensitiveKey(String key, Set<String> sensitiveFields) {

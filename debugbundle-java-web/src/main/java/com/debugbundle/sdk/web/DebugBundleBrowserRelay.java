@@ -295,22 +295,12 @@ public final class DebugBundleBrowserRelay {
         if (typed && !EvidenceProtocol.valid(event)) return null;
         sanitized.put("payload", stripProtectedFields(payload, 0));
         if (event.get("context") instanceof Map<?, ?> context) sanitized.put("context", stripProtectedFields(context, 0));
-        try {
-            if (!TelemetryPrivacy.hasSafeEventIdentity(sanitized, Set.of())) return null;
-            Map<String, Object> fields = new LinkedHashMap<>();
-            fields.put("service", sanitizedService);
-            fields.put("payload", sanitized.get("payload"));
-            if (sanitized.containsKey("context")) fields.put("context", sanitized.get("context"));
-            @SuppressWarnings("unchecked")
-            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(fields, Set.of());
-            if (!(safe.get("service") instanceof Map<?, ?>) || !(safe.get("payload") instanceof Map<?, ?>)) return null;
-            sanitized.put("service", safe.get("service"));
-            sanitized.put("payload", safe.get("payload"));
-            if (safe.containsKey("context")) sanitized.put("context", safe.get("context"));
-            return typed && !EvidenceProtocol.valid(sanitized) ? null : sanitized;
-        } catch (RuntimeException ignored) {
-            return null;
-        }
+        return EvidenceProtocol.protectRelayEvent(
+                sanitized,
+                config.redactFields(),
+                config.redactExactFields(),
+                typed
+        );
     }
 
     private Object stripProtectedFields(Object value, int depth) {
@@ -496,11 +486,17 @@ public final class DebugBundleBrowserRelay {
             List<String> allowedOrigins,
             String service,
             String environment,
-            Map<String, Object> evidenceCapabilities
+            Map<String, Object> evidenceCapabilities,
+            List<String> redactFields,
+            List<String> redactExactFields
     ) {
         public Config(String token, String endpoint, String mode, String directory, int rate, boolean durable,
+                String spool, List<String> origins, String service, String environment, Map<String, Object> evidenceCapabilities) {
+            this(token, endpoint, mode, directory, rate, durable, spool, origins, service, environment, evidenceCapabilities, List.of(), List.of());
+        }
+        public Config(String token, String endpoint, String mode, String directory, int rate, boolean durable,
                 String spool, List<String> origins, String service, String environment) {
-            this(token, endpoint, mode, directory, rate, durable, spool, origins, service, environment, null);
+            this(token, endpoint, mode, directory, rate, durable, spool, origins, service, environment, null, List.of(), List.of());
         }
         public Config(
                 String projectToken,
@@ -512,7 +508,7 @@ public final class DebugBundleBrowserRelay {
                 String spoolDir,
                 List<String> allowedOrigins
         ) {
-            this(projectToken, endpoint, projectMode, localEventsDir, rateLimitPerMinute, durableWrite, spoolDir, allowedOrigins, null, null);
+            this(projectToken, endpoint, projectMode, localEventsDir, rateLimitPerMinute, durableWrite, spoolDir, allowedOrigins, null, null, null, List.of(), List.of());
         }
 
         public Config {
@@ -529,6 +525,8 @@ public final class DebugBundleBrowserRelay {
             allowedOrigins = allowedOrigins == null ? List.of() : List.copyOf(allowedOrigins);
             service = service == null || service.isBlank() ? null : service;
             environment = environment == null || environment.isBlank() ? null : environment;
+            redactFields = redactFields == null ? List.of() : List.copyOf(redactFields);
+            redactExactFields = redactExactFields == null ? List.of() : List.copyOf(redactExactFields);
         }
     }
 

@@ -1,6 +1,7 @@
 package com.debugbundle.sdk;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
@@ -46,5 +47,17 @@ public final class EvidenceProtocol {
         List<String> features = new ArrayList<>(EvidenceWire.FEATURES);
         for (var entry : descriptors) features.retainAll((List<?>) descriptor(entry).get("features"));
         return descriptor(Map.of("version", 1, "features", features));
+    }
+    public static Map<String, Object> protectRelayEvent(
+            Map<String, Object> event,
+            Collection<String> redactFields,
+            Collection<String> redactExactFields,
+            boolean typed
+    ) {
+        TelemetryPrivacy.CompiledPolicy policy = TelemetryPrivacy.tryCompile(
+                redactFields == null ? List.of() : redactFields,
+                redactExactFields == null ? List.of() : redactExactFields
+        );
+        return ProtocolPrivacyBoundary.protectRelayEvent(event, policy, typed);
     }
 }

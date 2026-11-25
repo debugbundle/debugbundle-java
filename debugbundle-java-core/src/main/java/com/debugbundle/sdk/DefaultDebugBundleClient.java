@@ -34,6 +34,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     private final EventFactory eventFactory;
     private final EventSuppressionTracker suppressionTracker = new EventSuppressionTracker();
     private final Set<String> sensitiveFields;
+    private final Set<String> exactFields;
+    private final TelemetryPrivacy.CompiledPolicy privacyPolicy;
     private final ThreadLocal<RequestScopeState> requestScopeState = new ThreadLocal<>();
     private final ExceptionCaptureIdentity exceptionIdentity = new ExceptionCaptureIdentity();
     private final EvidenceDeliveryState evidence;
@@ -51,20 +53,29 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
             Supplier<Long> clockMillis
     ) {
         this.config = config;
-        this.active = config != null
-            && config.enabled()
-            && (hasProjectToken(config) || usesLocalOnlyMode(config));
-        DebugBundleTransport resolvedTransport = transport == null && active ? TransportFactory.create(config) : transport;
         this.clockMillis = clockMillis == null ? System::currentTimeMillis : clockMillis;
         this.sensitiveFields = config == null
                 ? Set.of()
                 : config.redactFields().stream()
-                        .map(value -> value.toLowerCase(Locale.ROOT))
+                        .filter(value -> value != null)
                         .collect(java.util.stream.Collectors.toSet());
-        this.eventFactory = new EventFactory(config, sensitiveFields, probeBuffers, this.clockMillis);
+        this.exactFields = config == null
+                ? Set.of()
+                : config.redactExactFields().stream()
+                        .filter(value -> value != null)
+                        .collect(java.util.stream.Collectors.toSet());
+        this.privacyPolicy = config == null
+                ? TelemetryPrivacy.DEFAULT_POLICY
+                : TelemetryPrivacy.tryCompile(config.redactFields(), config.redactExactFields());
+        this.active = config != null
+            && config.enabled()
+            && this.privacyPolicy != null
+            && (hasProjectToken(config) || usesLocalOnlyMode(config));
+        DebugBundleTransport resolvedTransport = transport == null && active ? TransportFactory.create(config) : transport;
+        this.eventFactory = new EventFactory(config, sensitiveFields, exactFields, privacyPolicy, probeBuffers, this.clockMillis);
         this.evidence = new EvidenceDeliveryState(config == null ? null : config.evidenceCapabilities());
         this.remote = new RemoteConfigManager(config, active, this.clockMillis, evidence);
-        this.evidenceController = new EvidenceController(config, evidence, new OperationContext(sensitiveFields),
+        this.evidenceController = new EvidenceController(config, evidence, new OperationContext(privacyPolicy),
                 () -> remote.remoteConfigSnapshot.capturePolicy(), this.clockMillis);
         this.delivery = active && resolvedTransport != null
                 ? new EventDeliveryWorker(config, resolvedTransport, this.clockMillis,
@@ -240,7 +251,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
         try {
             @SuppressWarnings("unchecked")
-            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(Map.of(key, value), sensitiveFields);
+            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(Map.of(key, value), privacyPolicy);
             if (!safe.containsKey(key) || !persistentContextLock.tryLock()) return;
             try {
                 if (!persistentContext.containsKey(key) && persistentContext.size() >= MAX_PERSISTENT_CONTEXT_ENTRIES) return;
@@ -300,7 +311,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
                             remote.remoteConfigSnapshot.triggerTokenKey(),
                             now()
                     ),
-                    new InfoBreadcrumbRing(sensitiveFields, clockMillis),
+                    new InfoBreadcrumbRing(privacyPolicy, clockMillis),
                     evidenceController.operations.begin(Map.of("kind", "request")),
                     new java.util.concurrent.atomic.AtomicBoolean()
             );
@@ -394,7 +405,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
 
     String scrubStackLine(String line) {
         try {
-            return (String) TelemetryPrivacy.protect(line, sensitiveFields);
+            return (String) TelemetryPrivacy.protect(line, privacyPolicy);
         } catch (Throwable ignored) {
             return null;
         }
@@ -405,13 +416,8 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
         return scope == null ? null : scope.ended();
     }
 
-    @SuppressWarnings("unchecked")
     Map<String, Object> snapshotStackContext(Map<String, Object> context) {
-        try {
-            return (Map<String, Object>) TelemetryPrivacy.protect(mergedContext(context), sensitiveFields);
-        } catch (Throwable ignored) {
-            return Map.of();
-        }
+        return ProtocolPrivacyBoundary.protectContext(mergedContext(context), privacyPolicy);
     }
 
     // The original ERROR stderr record already passed log policy. Its unmatched
@@ -478,29 +484,7 @@ final class DefaultDebugBundleClient implements DebugBundleClient {
     }
 
     private Map<String, Object> protectEvent(Map<String, Object> event) {
-        if (event == null) return null;
-        Map<String, Object> safe = protectOnce(event);
-        if (safe != null) return safe;
-        Map<String, Object> reduced = IngestionWire.withoutOptional(event, true);
-        if (reduced == null) return null;
-        safe = protectOnce(reduced);
-        return safe != null ? safe : protectOnce(IngestionWire.withoutOptional(event, false));
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> protectOnce(Map<String, Object> event) {
-        try {
-            Map<String, Object> identity = new LinkedHashMap<>(event);
-            // Correlation is application data: scrub it, while rejecting unsafe SDK identity fields.
-            identity.remove("correlation");
-            if (!TelemetryPrivacy.hasSafeEventIdentity(identity, sensitiveFields)) return null;
-            Map<String, Object> safe = (Map<String, Object>) TelemetryPrivacy.protect(event, sensitiveFields);
-            safe.remove("project_token");
-            safe.remove("project_id");
-            return BeforeSendProcessor.isValid(safe) ? safe : null;
-        } catch (RuntimeException ignored) {
-            return null;
-        }
+        return ProtocolPrivacyBoundary.protectClientEvent(event, privacyPolicy);
     }
 
     @SuppressWarnings("unchecked")

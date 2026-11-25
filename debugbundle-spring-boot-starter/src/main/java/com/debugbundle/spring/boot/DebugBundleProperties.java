@@ -17,6 +17,7 @@ public class DebugBundleProperties {
     private String service = "unknown-service";
     private boolean enabled = true;
     private List<String> redactFields;
+    private List<String> redactExactFields;
     private double sampleRate = 1.0d;
     private int batchSize = 25;
     private Duration flushInterval = Duration.ofSeconds(5);
@@ -77,6 +78,14 @@ public class DebugBundleProperties {
 
     public void setRedactFields(List<String> redactFields) {
         this.redactFields = redactFields == null ? null : new ArrayList<>(redactFields);
+    }
+
+    public List<String> getRedactExactFields() {
+        return redactExactFields;
+    }
+
+    public void setRedactExactFields(List<String> redactExactFields) {
+        this.redactExactFields = redactExactFields == null ? null : new ArrayList<>(redactExactFields);
     }
 
     public double getSampleRate() {

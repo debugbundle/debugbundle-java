@@ -100,7 +100,23 @@ public final class DebugBundleBrowserRelayConfigLoader {
                 ),
                 EvidenceProtocol.parsePin(firstNonBlank(initLookup.get("debugbundle.evidence-capabilities"),
                         contextLookup.get("debugbundle.evidence-capabilities"), systemLookup.get("debugbundle.evidence-capabilities"),
-                        environmentLookup.get("DEBUGBUNDLE_EVIDENCE_CAPABILITIES")))
+                        environmentLookup.get("DEBUGBUNDLE_EVIDENCE_CAPABILITIES"))),
+                parseList(
+                        firstNonBlank(
+                                initLookup.get("debugbundle.redact-fields"),
+                                contextLookup.get("debugbundle.redact-fields"),
+                                systemLookup.get("debugbundle.redact-fields"),
+                                environmentLookup.get("DEBUGBUNDLE_REDACT_FIELDS")
+                        )
+                ),
+                parseList(
+                        firstNonBlank(
+                                initLookup.get("debugbundle.redact-exact-fields"),
+                                contextLookup.get("debugbundle.redact-exact-fields"),
+                                systemLookup.get("debugbundle.redact-exact-fields"),
+                                environmentLookup.get("DEBUGBUNDLE_REDACT_EXACT_FIELDS")
+                        )
+                )
         );
     }
 

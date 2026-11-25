@@ -55,6 +55,12 @@ public final class DebugBundleConfigLoader {
                     System.getProperty("debugbundle.redact-fields"),
                     System.getenv("DEBUGBUNDLE_REDACT_FIELDS")
                 )))
+                .redactExactFields(parseStringList(firstNonBlank(
+                    primary.get("debugbundle.redact-exact-fields"),
+                    secondary.get("debugbundle.redact-exact-fields"),
+                    System.getProperty("debugbundle.redact-exact-fields"),
+                    System.getenv("DEBUGBUNDLE_REDACT_EXACT_FIELDS")
+                )))
                 .sampleRate(parseDouble(firstNonBlank(
                         primary.get("debugbundle.sample-rate"),
                         secondary.get("debugbundle.sample-rate"),

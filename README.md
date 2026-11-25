@@ -339,7 +339,8 @@ For connected delivery, confirm the event in DebugBundle and inspect its inciden
 | `projectMode` | `connected` | Use `local-only` to write events to `.debugbundle/local/events`. |
 | `endpoint` | `https://api.debugbundle.com/v1/events` | Ingestion endpoint for connected mode or self-hosting. |
 | `enabled` | `true` | Disable all capture without removing instrumentation. |
-| `redactFields` | common sensitive fields | Field names to redact recursively. |
+| `redactFields` | common sensitive fields | Field names to redact recursively (segment-aware). |
+| `redactExactFields` | empty | Exact field names to redact case-insensitively (ASCII) without matching compound keys (for example `tag` without masking `tag_name`). |
 | `logLevel` | `WARNING` | Minimum captured log severity. |
 | `sampleRate` | `1.0` | Fraction of events to keep before transport. |
 | `batchSize` | `25` | Events per batch before flushing. |

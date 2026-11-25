@@ -18,6 +18,8 @@ final class EventFactory {
 
     private final DebugBundleConfig config;
     private final Set<String> sensitiveFields;
+    private final Set<String> exactFields;
+    private final TelemetryPrivacy.CompiledPolicy privacyPolicy;
     private final Map<String, List<Map<String, Object>>> probeBuffers;
     private final Supplier<Long> clockMillis;
 
@@ -27,8 +29,28 @@ final class EventFactory {
             Map<String, List<Map<String, Object>>> probeBuffers,
             Supplier<Long> clockMillis
     ) {
+        this(
+                config,
+                sensitiveFields,
+                Set.of(),
+                TelemetryPrivacy.tryCompile(sensitiveFields, Set.of()),
+                probeBuffers,
+                clockMillis
+        );
+    }
+
+    EventFactory(
+            DebugBundleConfig config,
+            Set<String> sensitiveFields,
+            Set<String> exactFields,
+            TelemetryPrivacy.CompiledPolicy privacyPolicy,
+            Map<String, List<Map<String, Object>>> probeBuffers,
+            Supplier<Long> clockMillis
+    ) {
         this.config = config;
         this.sensitiveFields = sensitiveFields;
+        this.exactFields = exactFields == null ? Set.of() : exactFields;
+        this.privacyPolicy = privacyPolicy;
         this.probeBuffers = probeBuffers;
         this.clockMillis = clockMillis;
     }
@@ -189,7 +211,7 @@ final class EventFactory {
         if (config.maxProbeLabels() <= 0 || config.maxProbeEntriesPerLabel() <= 0) return;
         String safeLabel;
         try {
-            safeLabel = (String) TelemetryPrivacy.protect(label, sensitiveFields);
+            safeLabel = (String) TelemetryPrivacy.protect(label, privacyPolicy);
         } catch (RuntimeException ignored) {
             return;
         }
@@ -214,7 +236,7 @@ final class EventFactory {
     private Map<String, Object> normalizeProbeData(Object data) {
         Object redacted;
         try {
-            redacted = TelemetryPrivacy.protect(redact(data), sensitiveFields);
+            redacted = TelemetryPrivacy.protect(redact(data), privacyPolicy);
         } catch (RuntimeException ignored) {
             redacted = "[REDACTED]";
         }
@@ -260,10 +282,40 @@ final class EventFactory {
             event.put("correlation", correlation);
         }
         if (!eventContext.isEmpty()) {
-            event.put("context", redact(eventContext));
+            event.put("context", redactContextPreservingProtocol(eventContext));
         }
-        event.put("payload", redact(payload));
+        event.put("payload", redactPayloadPreservingProtocol(eventType, payload));
         return event;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> redactContextPreservingProtocol(Map<String, Object> eventContext) {
+        Map<String, Object> copy = new LinkedHashMap<>(eventContext);
+        Map<String, Object> preserved = new LinkedHashMap<>();
+        if (copy.containsKey("evidence_reference") && EvidenceWire.reference(copy.get("evidence_reference"))) {
+            preserved.put("evidence_reference", copy.remove("evidence_reference"));
+        }
+        if (copy.containsKey("evidence_limits") && ProtocolPrivacyBoundary.isValidEvidenceLimits(copy.get("evidence_limits"))) {
+            preserved.put("evidence_limits", copy.remove("evidence_limits"));
+        }
+        Map<String, Object> result = new LinkedHashMap<>((Map<String, Object>) redact(copy));
+        result.putAll(preserved);
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> redactPayloadPreservingProtocol(String eventType, Map<String, Object> payload) {
+        if ("diagnostic_context".equals(eventType)) {
+            return new LinkedHashMap<>(payload);
+        }
+        Map<String, Object> copy = new LinkedHashMap<>(payload);
+        Map<String, Object> preserved = new LinkedHashMap<>();
+        if ("error_suppressed".equals(eventType) && "queue_pressure".equals(copy.get("reason"))) {
+            preserved.put("reason", copy.remove("reason"));
+        }
+        Map<String, Object> result = new LinkedHashMap<>((Map<String, Object>) redact(copy));
+        result.putAll(preserved);
+        return result;
     }
 
     private Map<String, Object> extractCorrelation(Map<String, Object> inputContext) {
@@ -308,7 +360,7 @@ final class EventFactory {
         try {
             String message = error.getMessage();
             if (message == null || message.isBlank()) return error.getClass().getSimpleName();
-            String safe = (String) TelemetryPrivacy.protect(message, sensitiveFields);
+            String safe = (String) TelemetryPrivacy.protect(message, privacyPolicy);
             return safe.length() <= 4_096 ? safe : safe.substring(0, 4_096);
         } catch (Throwable ignored) {
             return error.getClass().getSimpleName();
@@ -371,7 +423,7 @@ final class EventFactory {
     }
 
     private Object redact(Object value) {
-        return Redaction.redact(value, sensitiveFields);
+        return Redaction.redact(value, sensitiveFields, exactFields);
     }
 
     private String isoTimestamp(Instant instant) {

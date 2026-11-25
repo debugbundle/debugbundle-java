@@ -36,7 +36,9 @@ final class DebugBundleBrowserRelayHandler {
                 resolved.getRelay().getAllowedOrigins(),
             resolved.getRelay().getService(),
             resolved.getRelay().getEnvironment(),
-            resolved.getEvidenceCapabilities()
+            resolved.getEvidenceCapabilities(),
+            resolved.getRedactFields(),
+            resolved.getRedactExactFields()
         );
     }
 

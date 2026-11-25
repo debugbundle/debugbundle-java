@@ -17,7 +17,7 @@ final class InfoBreadcrumbRing {
     private static final int MAX_BYTES = 16 * 1024;
     private static final long MAX_AGE_MILLIS = 60_000L;
 
-    private final Set<String> sensitiveFields;
+    private final TelemetryPrivacy.CompiledPolicy privacyPolicy;
     private final Supplier<Long> clockMillis;
     private final AtomicLong seen = new AtomicLong();
     private final ReentrantLock lock = new ReentrantLock();
@@ -25,7 +25,11 @@ final class InfoBreadcrumbRing {
     private int retainedBytes;
 
     InfoBreadcrumbRing(Set<String> sensitiveFields, Supplier<Long> clockMillis) {
-        this.sensitiveFields = sensitiveFields;
+        this(TelemetryPrivacy.tryCompile(sensitiveFields, Set.of()), clockMillis);
+    }
+
+    InfoBreadcrumbRing(TelemetryPrivacy.CompiledPolicy privacyPolicy, Supplier<Long> clockMillis) {
+        this.privacyPolicy = privacyPolicy;
         this.clockMillis = clockMillis;
     }
 
@@ -35,7 +39,7 @@ final class InfoBreadcrumbRing {
 
         String safe;
         try {
-            safe = (String) TelemetryPrivacy.protect(message, sensitiveFields);
+            safe = (String) TelemetryPrivacy.protect(message, privacyPolicy);
         } catch (RuntimeException ignored) {
             return;
         }
